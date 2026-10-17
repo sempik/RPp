@@ -1,0 +1,7 @@
+# large third-party binaries (see README, "Сборка из исходников")
+vendor/
+# build output
+dist/
+# old self-hosted download site (VPS only)
+site/
+node_modules/
