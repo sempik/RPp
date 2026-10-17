@@ -37,6 +37,21 @@
 
 Требования: Windows 10 или 11, 64 бита.
 
+## Это безопасно?
+
+Windows предупреждает о RPp только потому, что у программы нет платной цифровой подписи — то же самое происходит с любой новой программой от независимого автора. Вот что можно проверить самому:
+
+- **Весь код открыт** — он в этом репозитории, папка [`app/`](app): около 1400 строк, без сторонних библиотек и скрытых загрузок.
+- **Установщик собирают серверы GitHub**, а не чей-то компьютер: каждый релиз создаётся [этим сценарием](.github/workflows/release.yml) из кода репозитория, журнал сборки открыт во вкладке [Actions](https://github.com/sempik/RPp/actions). К файлам прикреплено [подтверждение происхождения](https://github.com/sempik/RPp/attestations), подделать его нельзя.
+- **Контрольные суммы.** В каждом релизе есть `SHA256SUMS.txt`. Сравните с хешем скачанного файла: `Get-FileHash RPp-Setup.exe` в PowerShell.
+- **Права администратора не нужны.** RPp ставится в папку пользователя и не трогает системные файлы.
+- **Никаких данных не отправляет.** В интернет программа обращается только к GitHub — узнать, вышла ли новая версия.
+- **Не работает в фоне** и не запускается вместе с Windows.
+- **Ваши записи не изменяет:** вырезанные фрагменты сохраняются отдельными файлами.
+- **Удаляется обычным способом:** «Параметры» → «Приложения» → RPp → «Удалить».
+
+Проверить происхождение файла можно и командой [GitHub CLI](https://cli.github.com): `gh attestation verify RPp-Setup.exe -R sempik/RPp`.
+
 ## Горячие клавиши
 
 | Клавиши | Действие |
@@ -59,12 +74,11 @@
 
 Приложение написано на [Electron](https://www.electronjs.org/) без зависимостей из npm: весь код в папке `app/`.
 
-1. Положите в папку `vendor/`:
-   - `electron.zip` — [Electron v44.8.0 для win32-x64](https://github.com/electron/electron/releases/download/v44.8.0/electron-v44.8.0-win32-x64.zip);
-   - `ffmpeg.exe` и `ffmpeg-LICENSE.txt` — из [сборки FFmpeg essentials](https://github.com/GyanD/codexffmpeg/releases) (папка `bin` и файл `LICENSE`);
-   - `rcedit-x64.exe` — из [electron/rcedit](https://github.com/electron/rcedit/releases).
+1. Скачайте зависимости: `powershell -ExecutionPolicy Bypass -File tools/fetch-vendor.ps1`. Скрипт загрузит в `vendor/` [Electron v44.8.0](https://github.com/electron/electron/releases/tag/v44.8.0), [FFmpeg essentials 9.0.2](https://github.com/GyanD/codexffmpeg/releases/tag/9.0.2) и [rcedit v2.0.0](https://github.com/electron/rcedit/releases/tag/v2.0.0) и сверит их SHA-256.
 2. Установите [Inno Setup 6](https://jrsoftware.org/isinfo.php): `winget install JRSoftware.InnoSetup`.
 3. Запустите `powershell -ExecutionPolicy Bypass -File build.ps1`. Установщик и zip появятся в `dist/`.
+
+Официальные релизы собираются точно так же, только на серверах GitHub: см. [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
 ## Лицензии
 

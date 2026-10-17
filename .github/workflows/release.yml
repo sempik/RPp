@@ -1,0 +1,88 @@
+# Builds RPp on a clean GitHub-hosted Windows machine from this repository's code and publishes the release.
+# Every file gets a signed build-provenance attestation, so anyone can check it was built here and not on someone's PC.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches app/package.json
+        shell: pwsh
+        run: |
+          $v = (Get-Content app/package.json -Raw | ConvertFrom-Json).version
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match version $v" }
+          "VERSION=$v" | Out-File $env:GITHUB_ENV -Append
+
+      - name: Download third-party binaries (SHA-256 pinned)
+        shell: pwsh
+        run: ./tools/fetch-vendor.ps1
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      - name: Build
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Prepare release files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory out | Out-Null
+          Copy-Item "dist/RPp-Setup-$env:VERSION.exe" out/RPp-Setup.exe
+          Copy-Item "dist/RPp-$env:VERSION-portable.zip" out/RPp-portable.zip
+          $sums = Get-ChildItem out | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" }
+          $sums | Set-Content out/SHA256SUMS.txt -Encoding ascii
+          $notes = Get-Content release-notes.md -Raw -Encoding utf8
+          $notes += @"
+
+          ---
+
+          ### Проверка подлинности
+
+          Эти файлы собраны серверами GitHub из открытого кода этого репозитория: [журнал сборки](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}), [подтверждения происхождения](${{ github.server_url }}/${{ github.repository }}/attestations).
+
+          SHA-256:
+          ``````
+          $($sums -join "`n")
+          ``````
+
+          Проверить хеш скачанного файла в PowerShell: ``Get-FileHash RPp-Setup.exe``
+          Проверить происхождение (нужен [GitHub CLI](https://cli.github.com)): ``gh attestation verify RPp-Setup.exe -R ${{ github.repository }}``
+          "@
+          $notes | Set-Content out-notes.md -Encoding utf8
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            out/RPp-Setup.exe
+            out/RPp-portable.zip
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" out/RPp-Setup.exe out/RPp-portable.zip out/SHA256SUMS.txt --title "RPp $env:VERSION" --notes-file out-notes.md
+
+      - name: Scan with VirusTotal
+        if: ${{ env.VT_API_KEY != '' }}
+        uses: crazy-max/ghaction-virustotal@v4
+        with:
+          vt_api_key: ${{ env.VT_API_KEY }}
+          update_release_body: true
+          files: |
+            out/RPp-Setup.exe
+            out/RPp-portable.zip

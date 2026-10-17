@@ -1,4 +1,4 @@
-; Inno Setup script for RPp. Built by build.ps1, which passes AppVersion, SrcDir, OutDir, Root.
+﻿; Inno Setup script for RPp. Built by build.ps1, which passes AppVersion, SrcDir, OutDir, Root.
 ; AppId is unchanged since the "OBS Player" days so the new installer upgrades old installs.
 
 [Setup]
@@ -6,7 +6,17 @@ AppId={{8F3A6C2E-4B1D-4E7A-9C55-0B5E2D7A1F33}
 AppName=RPp
 AppVersion={#AppVersion}
 AppVerName=RPp {#AppVersion}
-AppPublisher=RPp
+AppPublisher=RPp (github.com/sempik/RPp)
+AppPublisherURL=https://github.com/sempik/RPp
+AppSupportURL=https://github.com/sempik/RPp/issues
+AppUpdatesURL=https://github.com/sempik/RPp/releases
+AppComments=Открытый исходный код: https://github.com/sempik/RPp
+VersionInfoVersion={#AppVersion}
+VersionInfoProductName=RPp
+VersionInfoDescription=Установщик RPp — плеера для записей OBS
+VersionInfoCopyright=MIT License, sempik
+LicenseFile={#Root}\LICENSE
+InfoBeforeFile={#Root}\installer-info.txt
 DefaultDirName={localappdata}\Programs\RPp
 UsePreviousAppDir=no
 DefaultGroupName=RPp

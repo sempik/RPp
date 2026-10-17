@@ -121,13 +121,21 @@
   .steps li::before { content: counter(s); display: block; margin-bottom: 10px; font: 700 34px/1 DSEG7, monospace; color: var(--vfd); text-shadow: 0 0 10px #5ef2d066; }
   .steps b { color: var(--paper); font-weight: 600; }
 
+  .trust { margin-top: 6px; color: var(--dust); font-size: 14px; }
+  .trust a { color: var(--vfd); }
+  .safe { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 40px; }
+  .safe div { position: relative; padding-left: 30px; color: var(--dust); }
+  .safe div::before { content: "✓"; position: absolute; left: 0; top: 0; color: var(--vfd); font-weight: 700; }
+  .safe b { display: block; color: var(--paper); font-weight: 600; }
+  .safe code { font-size: 14px; color: var(--paper); background: var(--pit); padding: 1px 6px; border-radius: 4px; }
+
   footer { margin-top: 96px; padding: 28px 0 40px; border-top: 1px solid var(--ridge); color: var(--dim); font-size: 14px; }
   footer a { color: var(--dust); }
 
   @media (max-width: 820px) {
     .intro { grid-template-columns: 1fr; gap: 20px; }
     .row { grid-template-columns: 1fr; gap: 12px; }
-    .steps { grid-template-columns: 1fr; }
+    .steps, .safe { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -136,6 +144,7 @@
   <div class="strip">
     <a class="brand" href="./"><span class="tally"></span>RPp</a>
     <span class="spacer"></span>
+    <a class="small" href="#safe">Это безопасно?</a>
     <a class="small" href="#install">Установка</a>
     <a class="small" href="https://github.com/sempik/RPp">GitHub</a>
   </div>
@@ -159,6 +168,7 @@
           <a class="key" id="dlPortable" href="https://github.com/sempik/RPp/releases/latest/download/RPp-portable.zip">Без установки, zip <small id="portableSize"></small></a>
         </div>
         <div class="meta" id="ver">Windows 10 и 11, 64 бита</div>
+        <div class="trust">Открытый код, сборка на серверах GitHub, без прав администратора. <a href="#safe">Почему этому можно доверять</a></div>
       </div>
     </div>
   </div>
@@ -189,6 +199,21 @@
         <div class="caps"><kbd>Ctrl</kbd><kbd>C</kbd></div>
         <div><h3>Все записи перед глазами</h3><p>Библиотека показывает записи плитками с кадром и длительностью, по дням. Плеер помнит, где вы остановились в каждой записи, а время любого кадра можно скопировать одним нажатием.</p></div>
       </div>
+    </div>
+  </section>
+
+  <section id="safe">
+    <h2>Это безопасно?</h2>
+    <p class="sub">Windows предупреждает о RPp только потому, что у программы нет платной цифровой подписи. Вот что можно проверить самому.</p>
+    <div class="safe">
+      <div><b>Весь код открыт</b>Около 1400 строк <a href="https://github.com/sempik/RPp/tree/main/app">в репозитории на GitHub</a>, без сторонних библиотек и скрытых загрузок.</div>
+      <div><b>Собрано серверами GitHub</b>Каждый релиз собирается из кода репозитория, <a href="https://github.com/sempik/RPp/actions">журнал сборки</a> открыт, к файлам прикреплено <a href="https://github.com/sempik/RPp/attestations">подтверждение происхождения</a>.</div>
+      <div><b>Контрольные суммы</b>В каждом релизе есть <code>SHA256SUMS.txt</code>. Сравните с хешем файла: <code>Get-FileHash RPp-Setup.exe</code> в PowerShell.</div>
+      <div><b>Без прав администратора</b>RPp ставится в папку пользователя и не трогает системные файлы.</div>
+      <div><b>Ничего не отправляет</b>В интернет обращается только к GitHub, чтобы узнать, вышла ли новая версия.</div>
+      <div><b>Не работает в фоне</b>Не запускается вместе с Windows. Закрыли окно — программа завершилась.</div>
+      <div><b>Записи не изменяет</b>Вырезанные фрагменты сохраняются отдельными файлами рядом с исходником.</div>
+      <div><b>Удаляется как обычно</b>«Параметры» → «Приложения» → RPp → «Удалить».</div>
     </div>
   </section>
 

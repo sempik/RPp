@@ -9,13 +9,15 @@ $Dist   = Join-Path $Root 'dist'
 $Stage  = Join-Path $Dist 'RPp'
 $Ver    = (Get-Content (Join-Path $Root 'app\package.json') -Raw | ConvertFrom-Json).version
 $Exe    = Join-Path $Stage 'RPp.exe'
+# Windows' own bsdtar: it can read and write zip (GNU tar from Git for Windows cannot)
+$Tar    = Join-Path $env:SystemRoot 'System32\tar.exe'
 
 Write-Host "Building RPp $Ver"
 if (Test-Path $Stage) { Remove-Item $Stage -Recurse -Force }
 New-Item -ItemType Directory -Force $Stage | Out-Null
 
 # 1. Electron runtime
-tar -xf (Join-Path $Vendor 'electron.zip') -C $Stage
+& $Tar -xf (Join-Path $Vendor 'electron.zip') -C $Stage
 if ($LASTEXITCODE) { throw 'Failed to unpack electron.zip' }
 Rename-Item (Join-Path $Stage 'electron.exe') 'RPp.exe'
 Remove-Item (Join-Path $Stage 'resources\default_app.asar') -ErrorAction SilentlyContinue
@@ -40,7 +42,7 @@ if ($LASTEXITCODE) { throw 'rcedit failed' }
 # 4. Portable zip
 $Zip = Join-Path $Dist "RPp-$Ver-portable.zip"
 Remove-Item $Zip -ErrorAction SilentlyContinue
-tar -a -c -f $Zip -C $Dist 'RPp'
+& $Tar -a -c -f $Zip -C $Dist 'RPp'
 if ($LASTEXITCODE) { throw 'zip failed' }
 
 # 5. Installer
