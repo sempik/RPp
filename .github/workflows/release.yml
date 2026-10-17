@@ -17,7 +17,7 @@ jobs:
     env:
       VT_API_KEY: ${{ secrets.VT_API_KEY }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Check that the tag matches app/package.json
         shell: pwsh
@@ -65,7 +65,7 @@ jobs:
           $notes | Set-Content out-notes.md -Encoding utf8
 
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v3
         with:
           subject-path: |
             out/RPp-Setup.exe
