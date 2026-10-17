@@ -1,5 +1,6 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, clipboard, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, clipboard, systemPreferences, Notification } = require('electron');
+const os = require('os');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -23,19 +24,41 @@ const newerThan = (a, b) => {
   for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0);
   return false;
 };
-function fetchLatestVersion() {
-  return new Promise(resolve => {
-    const req = https.get(`https://api.github.com/repos/${REPO}/releases/latest`,
-      { timeout: 8000, headers: { 'User-Agent': 'RPp', Accept: 'application/vnd.github+json' } }, res => {
-        let body = '';
-        res.on('data', d => { body += d; });
-        res.on('end', () => {
-          try { resolve(String(JSON.parse(body).tag_name || '').replace(/^v/, '') || null); } catch { resolve(null); }
-        });
-      });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(null));
+// GET with redirects (release assets live behind a 302 to GitHub's CDN); resolves to the response stream.
+function httpsGet(url, timeout = 15000, hops = 5) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout, headers: { 'User-Agent': 'RPp', Accept: 'application/vnd.github+json, */*' } }, res => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops > 0) {
+        res.resume();
+        resolve(httpsGet(new URL(res.headers.location, url).href, timeout, hops - 1));
+      } else if (res.statusCode !== 200) {
+        res.resume(); reject(new Error('HTTP ' + res.statusCode));
+      } else resolve(res);
+    });
+    req.on('timeout', () => req.destroy(new Error('Нет ответа от GitHub')));
+    req.on('error', reject);
   });
+}
+async function httpsText(url) {
+  const res = await httpsGet(url);
+  const parts = []; let size = 0;
+  for await (const d of res) { parts.push(d); if ((size += d.length) > 2e6) throw new Error('too large'); }
+  return Buffer.concat(parts).toString('utf8'); // decode once: chunks can split a Cyrillic character
+}
+async function fetchLatestRelease() {
+  const r = JSON.parse(await httpsText(`https://api.github.com/repos/${REPO}/releases/latest`));
+  const asset = n => (r.assets || []).find(a => a.name === n);
+  const setup = asset('RPp-Setup.exe'), sums = asset('SHA256SUMS.txt');
+  // the first bullet list of the release notes is "Что нового"; the rest (VirusTotal, hashes) is for the web page
+  const lines = String(r.body || '').split(/\r?\n/), isItem = l => /^\s*[-*] /.test(l);
+  const first = lines.findIndex(isItem), notes = [];
+  for (let i = first; first >= 0 && i < lines.length && isItem(lines[i]) && notes.length < 8; i++)
+    notes.push(lines[i].replace(/^\s*[-*] /, '').replace(/\*\*|`/g, '').replace(/\[([^\]]+)\]\([^)]+\)/g, '$1'));
+  return {
+    version: String(r.tag_name || '').replace(/^v/, ''),
+    notes,
+    setup: setup && sums ? { url: setup.browser_download_url, size: setup.size, sums: sums.browser_download_url } : null,
+  };
 }
 
 // The app used to be called "OBS Player": carry its settings and thumbnails over once.
@@ -257,6 +280,76 @@ function init() {
     return { dir, parent: parent === dir ? null : parent, dirs, files };
   }
 
+  // ---------- updates ----------
+  // One small request to the GitHub API at start and every 6 hours; nothing is downloaded until the user asks.
+  const CHECK_EVERY = 6 * 3600e3;
+  const installed = !!process.env.OBSP_UPDATE_DRYRUN || app.isPackaged && fs.existsSync(path.join(path.dirname(process.execPath), 'unins000.exe'));
+  const updFile = path.join(app.getPath('userData'), 'update.json');
+  const updState = (() => { try { return JSON.parse(fs.readFileSync(updFile, 'utf8')); } catch { return {}; } })();
+  const saveUpd = () => fs.writeFile(updFile, JSON.stringify(updState), () => {});
+  let latest = null, dl = null;
+
+  async function checkUpdates() {
+    try {
+      const r = await fetchLatestRelease();
+      updState.checked = Date.now(); saveUpd();
+      if (!r.version || !newerThan(r.version, app.getVersion())) return;
+      latest = r;
+      if (win) win.webContents.send('update', publicUpdate());
+      if (updState.notified !== r.version && Notification.isSupported()) {
+        updState.notified = r.version; saveUpd();
+        const n = new Notification({ title: `Вышла RPp ${r.version}`, body: 'Нажмите, чтобы посмотреть, что нового, и обновиться.', icon: path.join(__dirname, 'icon.png') });
+        n.on('click', () => { if (!win) return; if (win.isMinimized()) win.restore(); win.show(); win.focus(); win.webContents.send('show-update'); });
+        n.show();
+      }
+    } catch { /* offline or rate-limited: try again next round */ }
+  }
+  function scheduleChecks() {
+    setTimeout(checkUpdates, 6000); // after the window and library have settled
+    setInterval(checkUpdates, CHECK_EVERY);
+  }
+  const publicUpdate = () => latest && { version: latest.version, current: app.getVersion(), notes: latest.notes, size: latest.setup && latest.setup.size, canInstall: installed && !!latest.setup };
+
+  function sendDl() { if (win) win.webContents.send('update-progress', { state: dl.state, percent: dl.percent, error: dl.error }); }
+  async function downloadAndInstall() {
+    if (!latest || !latest.setup || !installed) throw new Error('Обновление недоступно');
+    if (job && job.state === 'running') throw new Error('Дождитесь, пока сохранится фрагмент');
+    if (dl && dl.state === 'downloading') return;
+    dl = { state: 'downloading', percent: 0 };
+    sendDl();
+    const dir = path.join(os.tmpdir(), 'RPp-update');
+    const file = path.join(dir, `RPp-Setup-${latest.version}.exe`);
+    try {
+      const sums = await httpsText(latest.setup.sums);
+      const want = (/^([0-9a-f]{64})\s+\*?RPp-Setup\.exe\s*$/mi.exec(sums) || [])[1];
+      if (!want) throw new Error('В релизе нет контрольной суммы установщика');
+      await fsp.mkdir(dir, { recursive: true });
+      const res = await httpsGet(latest.setup.url, 30000);
+      const total = Number(res.headers['content-length']) || latest.setup.size || 0;
+      const hash = crypto.createHash('sha256');
+      const out = fs.createWriteStream(file);
+      let got = 0, lastSent = 0;
+      res.on('data', d => {
+        hash.update(d); got += d.length;
+        const now = Date.now();
+        if (total && now - lastSent > 250) { lastSent = now; dl.percent = Math.round(got / total * 100); sendDl(); }
+      });
+      await new Promise((resolve, reject) => { res.pipe(out); out.on('finish', resolve); out.on('error', reject); res.on('error', reject); });
+      if (hash.digest('hex') !== want.toLowerCase()) throw new Error('Файл скачался с ошибкой: контрольная сумма не совпала');
+      dl = { state: 'installing', percent: 100 };
+      sendDl();
+      if (process.env.OBSP_UPDATE_DRYRUN) return; // smoke test: stop after the verified download
+      // Quit first and give our processes ~2 s to release their files; the installer then starts RPp again (/RELAUNCH=1).
+      spawn(process.env.ComSpec || 'cmd.exe', ['/d', '/c', `ping -n 3 127.0.0.1 >nul & start "" "${file}" /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS /RELAUNCH=1`],
+        { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
+      setTimeout(() => app.quit(), 300);
+    } catch (e) {
+      fs.rm(file, { force: true }, () => {});
+      dl = { state: 'error', percent: 0, error: e.message };
+      sendDl();
+    }
+  }
+
   // ---------- IPC ----------
   ipcMain.handle('base', async () => { await serverReady; return videoBase; });
   ipcMain.handle('info', () => ({ ffmpeg: ffmpegPath === 'ffmpeg' ? null : ffmpegPath, version: app.getVersion(), accent: accentColor() }));
@@ -274,10 +367,8 @@ function init() {
   ipcMain.handle('reveal', (_, p) => { if (p) shell.showItemInFolder(p); });
   ipcMain.handle('open-site', () => shell.openExternal(SITE_URL));
   ipcMain.handle('copy', (_, text) => clipboard.writeText(String(text).slice(0, 100)));
-  ipcMain.handle('check-update', async () => {
-    const v = await fetchLatestVersion();
-    return v && newerThan(v, app.getVersion()) ? v : null;
-  });
+  ipcMain.handle('get-update', () => publicUpdate());
+  ipcMain.handle('install-update', () => downloadAndInstall());
   ipcMain.handle('initial-file', () => { const f = pendingFile; pendingFile = null; return f; });
   ipcMain.handle('open-dialog', async () => {
     const r = await dialog.showOpenDialog(win, {
@@ -322,14 +413,35 @@ function init() {
     });
     win.loadFile(path.join(__dirname, 'index.html'));
 
-    // Build smoke test: OBSP_SCREENSHOT=<png> captures the window a few seconds after load, then exits.
-    const shot = process.env.OBSP_SCREENSHOT;
-    if (shot) {
+    // Dev hooks for smoke tests and site demos:
+    //   OBSP_SCREENSHOT=<png>  capture the window after OBSP_EVAL finishes, then exit
+    //   OBSP_RECORD=<dir>      capture frames (+ frames.txt with timings) while OBSP_EVAL runs, then exit
+    const shot = process.env.OBSP_SCREENSHOT, rec = process.env.OBSP_RECORD;
+    if (shot || rec) {
+      if (process.env.OBSP_SIZE) { const [w, h] = process.env.OBSP_SIZE.split('x').map(Number); win.setContentSize(w, h); }
       win.webContents.once('did-finish-load', () => setTimeout(async () => {
-        // optional UI script for the smoke test (may return a promise)
+        let recording = !!rec;
+        const frames = [];
+        const loop = (async () => {
+          let last = Date.now();
+          while (recording) {
+            const img = await win.webContents.capturePage();
+            const name = String(frames.length).padStart(5, '0') + '.jpg';
+            fs.writeFileSync(path.join(rec, name), img.toJPEG(92));
+            const now = Date.now();
+            frames.push([name, (now - last) / 1000]);
+            last = now;
+          }
+        })();
         if (process.env.OBSP_EVAL) await win.webContents.executeJavaScript(process.env.OBSP_EVAL).catch(e => console.error(e));
-        const img = await win.webContents.capturePage();
-        fs.writeFileSync(shot, img.toPNG());
+        recording = false;
+        await loop;
+        if (rec) {
+          // concat-demuxer list: each frame is shown until the next one was captured
+          const list = frames.map(([n], i) => `file '${n}'\nduration ${(frames[i + 1] || frames[i])[1].toFixed(4)}`).join('\n');
+          fs.writeFileSync(path.join(rec, 'frames.txt'), list + `\nfile '${frames[frames.length - 1][0]}'\n`);
+        }
+        if (shot) fs.writeFileSync(shot, (await win.webContents.capturePage()).toPNG());
         app.quit();
       }, Number(process.env.OBSP_SCREENSHOT_DELAY) || 5000));
     }
@@ -347,6 +459,7 @@ function init() {
     nativeTheme.themeSource = 'dark';
     Menu.setApplicationMenu(null);
     createWindow();
+    if ((!process.env.OBSP_SCREENSHOT && !process.env.OBSP_RECORD) || process.env.OBSP_CHECK_UPDATES) scheduleChecks();
     if (fs.existsSync(ffmpegPath) || ffmpegPath === 'ffmpeg') setTimeout(pickEncoder, 3000);
   });
 

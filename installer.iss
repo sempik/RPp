@@ -56,7 +56,8 @@ Type: files; Name: "{autodesktop}\OBS Player.lnk"
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
-Name: "{autoprograms}\RPp"; Filename: "{app}\RPp.exe"
+; AppUserModelID matches app.setAppUserModelId() so Windows shows the app's notifications
+Name: "{autoprograms}\RPp"; Filename: "{app}\RPp.exe"; AppUserModelID: "com.rpp.app"
 Name: "{autodesktop}\RPp"; Filename: "{app}\RPp.exe"; Tasks: desktopicon
 
 [Registry]
@@ -85,3 +86,11 @@ Root: HKCU; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: string; 
 
 [Run]
 Filename: "{app}\RPp.exe"; Description: "{cm:LaunchProgram,RPp}"; Flags: nowait postinstall skipifsilent
+; update started from inside RPp (/SILENT /RELAUNCH=1): open the new version when done
+Filename: "{app}\RPp.exe"; Flags: nowait; Check: ShouldRelaunch
+
+[Code]
+function ShouldRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:relaunch|0}') = '1';
+end;

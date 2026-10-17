@@ -254,6 +254,21 @@
   .keys span:nth-child(even) { color: var(--text-2); }
   kbd { display: inline-block; min-width: 24px; padding: 2px 6px; border-radius: 4px; text-align: center; font: 12px var(--font); background: #ffffff10; border: 1px solid #ffffff1a; border-bottom-color: #ffffff30; }
   .dialog .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 20px; color: var(--text-3); font-size: 12px; }
+  .dialog .foot .spacer { flex: 1; }
+  .dialog .foot .btn + .btn { margin-left: 8px; }
+  .upd-sub { color: var(--text-2); margin: -6px 0 14px; }
+  .upd-notes { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+  .upd-notes:empty { display: none; }
+  .upd-bar { height: 4px; border-radius: 2px; background: #ffffff1f; margin-top: 18px; overflow: hidden; display: none; }
+  .upd-bar.show { display: block; }
+  .upd-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .upd-msg { margin-top: 10px; color: var(--text-2); font-size: 12px; min-height: 16px; }
+  .upd-msg.err { color: var(--danger); }
+  .upd-pop { position: fixed; right: 20px; bottom: 20px; z-index: 55; display: none; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; }
+  .upd-pop.show { display: flex; animation: pop-in .25s ease-out; }
+  .upd-pop > .ic { color: var(--accent); font-size: 16px; }
+  @keyframes pop-in { from { opacity: 0; transform: translateY(8px); } }
+  body.play .upd-pop { bottom: 120px; }
   .toast { position: fixed; left: 50%; top: 48px; transform: translate(-50%, -6px); z-index: 70; padding: 10px 16px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; white-space: nowrap; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
   .toast.err { color: var(--danger); }
@@ -262,7 +277,7 @@
 <body>
 
 <div class="titlebar">
-  <button class="tb-back ic" id="bBack" title="Назад (Backspace)">&#xE72B;</button>
+  <button class="tb-back ic" id="bBack" title="Назад (Esc)">&#xE72B;</button>
   <div class="tb-app"><img src="icon.png" alt=""><span>RPp</span><span class="doc" id="docTitle"></span></div>
 </div>
 
@@ -383,12 +398,33 @@
       <span><kbd>I</kbd> <kbd>O</kbd></span><span>Начало и конец фрагмента</span>
       <span><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span><span>Сохранить копию фрагмента</span>
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd></span><span>Скопировать текущее время</span>
-      <span><kbd>F</kbd> <kbd>Esc</kbd></span><span>Во весь экран и выход из него</span>
-      <span><kbd>Backspace</kbd></span><span>Вернуться к видео</span>
+      <span><kbd>F</kbd></span><span>Во весь экран и выход из него</span>
+      <span><kbd>Esc</kbd> <kbd>Backspace</kbd></span><span>Вернуться в библиотеку</span>
       <span><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span>Открыть файл</span>
     </div>
     <div class="foot"><span id="ver"></span><button class="btn accent" id="bHelpClose">Закрыть</button></div>
   </div>
+</div>
+<div class="dialog" id="upd">
+  <div class="card acrylic">
+    <h3 id="updTitle"></h3>
+    <div class="upd-sub" id="updSub"></div>
+    <ul class="upd-notes" id="updNotes"></ul>
+    <div class="upd-bar" id="updBar"><i></i></div>
+    <div class="upd-msg" id="updMsg"></div>
+    <div class="foot">
+      <button class="btn subtle" id="bUpdGh"><span class="ic">&#xE8A7;</span>Открыть на GitHub</button>
+      <span class="spacer"></span>
+      <button class="btn" id="bUpdLater">Позже</button>
+      <button class="btn accent" id="bUpdGo"></button>
+    </div>
+  </div>
+</div>
+<div class="upd-pop acrylic" id="updPop">
+  <span class="ic">&#xE896;</span>
+  <span id="updPopTxt"></span>
+  <button class="btn accent" id="bUpdPop">Подробнее</button>
+  <button class="ib" id="bUpdPopX" title="Закрыть"><span class="ic">&#xE711;</span></button>
 </div>
 <div class="toast acrylic" id="toast"></div>
 
@@ -918,7 +954,8 @@
   function toggleFull() {
     document.fullscreenElement ? document.exitFullscreen() : $('player').requestFullscreen().catch(() => {});
   }
-  document.addEventListener('fullscreenchange', () => { $('bFull').textContent = document.fullscreenElement ? '' : ''; });
+  let fullExitAt = -1e9;
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) fullExitAt = performance.now(); $('bFull').textContent = document.fullscreenElement ? '' : ''; });
   $('bFull').onclick = toggleFull;
   $('bBack').onclick = () => showPlayer(false);
   $('bRefresh').onclick = () => openDir(curDir, true);
@@ -984,6 +1021,7 @@
     if (e.ctrlKey && code === 'KeyO') { handled(); openFileDialog(); return; }
     if (k === 'F5') { handled(); openDir(curDir, true); return; }
     if ($('help').classList.contains('show')) { if (k === 'Escape') showHelp(false); return; }
+    if ($('upd').classList.contains('show')) { if (k === 'Escape' && !updBusy) showUpdate(false); return; }
     if (!playing) { if (k === 'Backspace' && listing && listing.parent) openDir(listing.parent); return; }
     if (e.ctrlKey && k === 'Enter') { handled(); cut(); return; }
     if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyTime(v.currentTime, 'Время', $('tCur')); return; }
@@ -1012,7 +1050,14 @@
       case 'Equal': case 'NumpadAdd': handled(); zoomCenter(1.25); break;
       case 'Minus': case 'NumpadSubtract': handled(); zoomCenter(0.8); break;
       case 'Backspace': handled(); showPlayer(false); break;
-      case 'Escape': if ($('menu').classList.contains('show')) closeMenu(); else if (!document.fullscreenElement && $('trim').classList.contains('show')) showTrim(false); break;
+      case 'Escape': // menu → trim → fullscreen → library, one layer per press
+        handled();
+        if ($('menu').classList.contains('show')) closeMenu();
+        else if (document.fullscreenElement) document.exitFullscreen();
+        else if (performance.now() - fullExitAt < 400) {} // this Esc already left fullscreen
+        else if ($('trim').classList.contains('show')) showTrim(false);
+        else showPlayer(false);
+        break;
       default: if (k === '?') { handled(); showHelp(true); }
     }
   });
@@ -1025,7 +1070,53 @@
   }
   $('bOpen').onclick = openFileDialog;
   N.onOpenFile(p => { curDir = p.replace(/\\[^\\]+$/, ''); loadFile(p); });
-  $('bUpdate').onclick = () => N.openSite();
+
+  // ---------- updates (main process checks GitHub and pushes the result here) ----------
+  let upd = null, updBusy = false;
+  function onUpdate(u) {
+    if (!u) return;
+    upd = u;
+    $('updTxt').textContent = 'Доступна версия ' + u.version;
+    $('bUpdate').classList.add('show');
+    $('updPopTxt').textContent = 'Вышла RPp ' + u.version;
+    if (store.get('updSeen', '') !== u.version && !$('upd').classList.contains('show')) $('updPop').classList.add('show');
+  }
+  function showUpdate(on) {
+    if (on && !upd) return;
+    $('upd').classList.toggle('show', on);
+    if (!on) return;
+    store.set('updSeen', upd.version); $('updPop').classList.remove('show');
+    $('updTitle').textContent = 'Вышла RPp ' + upd.version;
+    $('updSub').textContent = `У вас ${upd.current}.` + (upd.size ? ` Обновление весит ${fmtSize(upd.size)}.` : '');
+    $('updNotes').innerHTML = upd.notes.map(n => `<li>${esc(n)}</li>`).join('');
+    if (!updBusy) {
+      $('bUpdGo').textContent = upd.canInstall ? 'Обновить' : 'Скачать';
+      $('updMsg').textContent = upd.canInstall ? 'RPp закроется на несколько секунд и откроется уже новой версией.' : 'У вас версия без установки: скачайте новый архив со страницы релиза.';
+      $('updMsg').classList.remove('err');
+    }
+  }
+  N.onUpdate(onUpdate);
+  N.onShowUpdate(() => showUpdate(true));
+  N.onUpdateProgress(p => {
+    updBusy = p.state === 'downloading' || p.state === 'installing';
+    $('bUpdGo').disabled = $('bUpdLater').disabled = updBusy;
+    $('updBar').classList.toggle('show', updBusy);
+    $('updBar').firstChild.style.width = p.percent + '%';
+    $('updMsg').classList.toggle('err', p.state === 'error');
+    $('updMsg').textContent = p.state === 'downloading' ? `Скачиваю… ${p.percent}%` : p.state === 'installing' ? 'Устанавливаю, RPp сейчас перезапустится…' : 'Не получилось обновиться: ' + p.error;
+    if (p.state === 'error') $('bUpdGo').textContent = 'Повторить';
+  });
+  $('bUpdate').onclick = () => showUpdate(true);
+  $('bUpdPop').onclick = () => showUpdate(true);
+  $('bUpdPopX').onclick = () => { store.set('updSeen', upd.version); $('updPop').classList.remove('show'); };
+  $('bUpdLater').onclick = () => showUpdate(false);
+  $('upd').onclick = e => { if (e.target === $('upd') && !updBusy) showUpdate(false); };
+  $('bUpdGh').onclick = () => N.openSite();
+  $('bUpdGo').onclick = () => {
+    if (!upd.canInstall) { N.openSite(); showUpdate(false); return; }
+    v.pause();
+    N.installUpdate().catch(e => { $('updMsg').textContent = e.message; $('updMsg').classList.add('err'); });
+  };
 
   (async () => {
     videoBase = await N.base();
@@ -1038,12 +1129,7 @@
     if (startFile) { curDir = startFile.replace(/\\[^\\]+$/, ''); store.set('dir', curDir); loadFile(startFile); }
     else openDir(store.get('dir', null));
     updateCutState();
-    setTimeout(async () => {
-      const nv = await N.checkUpdate().catch(() => null);
-      if (!nv) return;
-      $('updTxt').textContent = 'Доступна версия ' + nv;
-      $('bUpdate').classList.add('show');
-    }, 4000);
+    N.getUpdate().then(onUpdate, () => {}); // in case the check finished before the page loaded
   })();
 })();
 </script>
