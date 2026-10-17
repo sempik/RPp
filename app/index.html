@@ -77,6 +77,17 @@
   .crumbs button:hover { color: var(--text); background: #ffffff0f; }
   .crumbs button:last-child { color: var(--text); }
   .crumbs .ic { font-size: 9px; }
+  .pivot { display: flex; gap: 24px; margin: 6px 0 12px; }
+  .pivot button { position: relative; border: 0; background: none; padding: 6px 0; color: var(--text-2); font: 600 15px var(--display); cursor: pointer; }
+  .pivot button:hover { color: var(--text); }
+  .pivot button.on { color: var(--text); }
+  .pivot button.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; border-radius: 2px; background: var(--accent); }
+  body.all .crumbs { display: none; }
+  .scanline { display: none; align-items: center; gap: 10px; color: var(--text-3); font-size: 13px; min-height: 20px; }
+  body.all .scanline { display: flex; }
+  .scanline .spin { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #ffffff30; border-top-color: var(--accent); animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #more { height: 1px; }
   .lib-group { margin-top: 26px; }
   .lib-group h2 { margin: 0 0 12px; font: 600 20px/28px var(--display); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); gap: 24px 16px; }
@@ -292,8 +303,11 @@
       <button class="btn subtle" id="bRefresh" title="Обновить (F5)"><span class="ic">&#xE72C;</span></button>
     </div>
   </div>
+  <nav class="pivot" id="pivot"><button data-view="folders">Папки</button><button data-view="all">Все видео</button></nav>
   <nav class="crumbs" id="crumbs"></nav>
+  <div class="scanline" id="scanline"></div>
   <div id="groups"></div>
+  <div id="more"></div>
 </main>
 
 <!-- ================= player ================= -->
@@ -491,7 +505,7 @@
       v.pause(); savePos(); closeMenu();
       if (document.fullscreenElement) document.exitFullscreen();
       $('docTitle').textContent = ''; document.title = 'RPp';
-      if (curDir) openDir(curDir, true);
+      if (curDir || view === 'all') refreshView(true);
     }
     wake();
   }
@@ -554,13 +568,78 @@
     }
   }
 
+  function group(title) {
+    const g = document.createElement('section'); g.className = 'lib-group';
+    g.innerHTML = `<h2>${esc(title)}</h2><div class="tiles"></div>`;
+    $('groups').appendChild(g); return g.querySelector('.tiles');
+  }
+  // Video tiles grouped by day. Big lists ("all videos") are added in pages as the user scrolls.
+  const PAGE = 120;
+  let pending = [], lastDay = null, dayTiles = null, withFolder = false;
+  function renderFiles(files, showFolder) {
+    withFolder = showFolder; lastDay = null; dayTiles = null;
+    pending = files.map(x => {
+      const m = OBS_NAME.exec(x.name);
+      const when = m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(x.mtime);
+      return { ...x, when, obs: !!m, clip: / cut \d/.test(x.name) };
+    }).sort((a, b) => b.when - a.when);
+    renderMore();
+  }
+  function renderMore() {
+    for (const x of pending.splice(0, PAGE)) {
+      const day = dayLabel(x.when);
+      if (day !== lastDay) { dayTiles = group(day); lastDay = day; }
+      const title = x.obs ? `Запись ${pad(x.when.getHours())}:${pad(x.when.getMinutes())}` + (x.clip ? ', фрагмент' : '') : x.name.replace(/\.[^.]+$/, '');
+      const folder = withFolder ? baseName(x.path.slice(0, x.path.lastIndexOf('\\'))) + ' · ' : '';
+      const b = document.createElement('button');
+      b.className = 'tile' + (cur && cur.path === x.path ? ' current' : '');
+      b.dataset.path = x.path; b.title = withFolder ? x.path : x.name;
+      b.innerHTML = `<div class="thumb"><img alt=""><span class="ph ic">&#xE714;</span><span class="play ic">&#xE768;</span>` +
+        `<span class="dur" style="display:none"></span><span class="watched"></span></div>` +
+        `<div class="name">${esc(title)}</div><div class="sub">${esc(folder + fmtSize(x.size))}</div>`;
+      b.onclick = () => loadFile(x.path);
+      dayTiles.appendChild(b);
+      io.observe(b);
+    }
+    moreIO.unobserve($('more')); moreIO.observe($('more')); // re-check: the sentinel may still be on screen
+  }
+  const moreIO = new IntersectionObserver(e => { if (e[0].isIntersecting && pending.length) renderMore(); }, { root: $('library'), rootMargin: '800px' });
+
+  // ---------- "all videos" tab ----------
+  let view = store.get('view', 'folders'), media = null, scanning = false, scanInfo = null;
+  function setView(v2) {
+    view = v2; store.set('view', view);
+    document.body.classList.toggle('all', view === 'all');
+    for (const b of $('pivot').children) b.classList.toggle('on', b.dataset.view === view);
+    $('library').scrollTop = 0;
+    refreshView();
+  }
+  function refreshView(keepScroll) {
+    if (view === 'folders') return openDir(curDir, keepScroll);
+    const scroll = $('library').scrollTop;
+    renderAll();
+    if (keepScroll) $('library').scrollTop = scroll;
+  }
+  function renderScanline() {
+    const n = media ? media.files.length : 0;
+    $('scanline').innerHTML = scanning
+      ? `<span class="spin"></span>Ищу видео на дисках…` + (scanInfo ? ` просмотрено папок: ${scanInfo.dirs.toLocaleString('ru')}, найдено: ${scanInfo.found.toLocaleString('ru')}` : '')
+      : media ? `Найдено видео: ${n.toLocaleString('ru')}. Системные папки и папки игр пропущены.` : '';
+  }
+  function renderAll() {
+    renderScanline();
+    $('groups').innerHTML = '';
+    if (media && media.files.length) return renderFiles(media.files, true);
+    pending = [];
+    if (!scanning) $('groups').innerHTML = `<div class="empty"><span class="ic">&#xE714;</span><b>Видео не найдено</b>
+      На локальных дисках нет видеофайлов больше 1 МБ.</div>`;
+  }
+  for (const b of $('pivot').children) b.onclick = () => view !== b.dataset.view && setView(b.dataset.view);
+  N.onMediaProgress(p => { scanning = true; scanInfo = p; if (view === 'all') { renderScanline(); if (!media) renderAll(); } });
+  N.onMedia(m => { media = m; scanning = false; scanInfo = null; if (view === 'all' && !document.body.classList.contains('play')) refreshView(true); });
+
   function renderLibrary(d) {
-    const root = $('groups'); root.innerHTML = '';
-    const group = title => {
-      const g = document.createElement('section'); g.className = 'lib-group';
-      g.innerHTML = `<h2>${esc(title)}</h2><div class="tiles"></div>`;
-      root.appendChild(g); return g.querySelector('.tiles');
-    };
+    $('groups').innerHTML = '';
     if (d.dirs.length) {
       const tiles = group('Папки');
       for (const x of d.dirs) {
@@ -570,28 +649,8 @@
         tiles.appendChild(b);
       }
     }
-    let lastDay = null, tiles = null;
-    d.files
-      .map(x => {
-        const m = OBS_NAME.exec(x.name);
-        const when = m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(x.mtime);
-        return { ...x, when, obs: !!m, clip: / cut \d/.test(x.name) };
-      })
-      .sort((a, b) => b.when - a.when)
-      .forEach(x => {
-        const day = dayLabel(x.when);
-        if (day !== lastDay) { tiles = group(day); lastDay = day; }
-        const title = x.obs ? `Запись ${pad(x.when.getHours())}:${pad(x.when.getMinutes())}` + (x.clip ? ', фрагмент' : '') : x.name.replace(/\.[^.]+$/, '');
-        const b = document.createElement('button');
-        b.className = 'tile' + (cur && cur.path === x.path ? ' current' : '');
-        b.dataset.path = x.path; b.title = x.name;
-        b.innerHTML = `<div class="thumb"><img alt=""><span class="ph ic">&#xE714;</span><span class="play ic">&#xE768;</span>` +
-          `<span class="dur" style="display:none"></span><span class="watched"></span></div>` +
-          `<div class="name">${esc(title)}</div><div class="sub">${esc(fmtSize(x.size))}</div>`;
-        b.onclick = () => loadFile(x.path);
-        tiles.appendChild(b);
-        io.observe(b);
-      });
+    renderFiles(d.files, false);
+    const root = $('groups');
     if (!d.dirs.length && !d.files.length) {
       root.innerHTML = `<div class="empty"><span class="ic">&#xE714;</span><b>Здесь пока нет видео</b>
         Записи OBS из этой папки появятся здесь.<br><button class="btn accent" id="bEmptyOpen">Открыть файл</button></div>`;
@@ -958,7 +1017,11 @@
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) fullExitAt = performance.now(); $('bFull').textContent = document.fullscreenElement ? '' : ''; });
   $('bFull').onclick = toggleFull;
   $('bBack').onclick = () => showPlayer(false);
-  $('bRefresh').onclick = () => openDir(curDir, true);
+  function refreshButton() {
+    if (view === 'folders') return openDir(curDir, true);
+    if (!scanning) { scanning = true; scanInfo = null; renderScanline(); N.rescan(); }
+  }
+  $('bRefresh').onclick = refreshButton;
 
   // ---------- auto-hide transport while watching ----------
   let idleTimer;
@@ -1019,10 +1082,10 @@
     const k = e.key, code = e.code, playing = document.body.classList.contains('play');
     const handled = () => e.preventDefault();
     if (e.ctrlKey && code === 'KeyO') { handled(); openFileDialog(); return; }
-    if (k === 'F5') { handled(); openDir(curDir, true); return; }
+    if (k === 'F5') { handled(); refreshButton(); return; }
     if ($('help').classList.contains('show')) { if (k === 'Escape') showHelp(false); return; }
     if ($('upd').classList.contains('show')) { if (k === 'Escape' && !updBusy) showUpdate(false); return; }
-    if (!playing) { if (k === 'Backspace' && listing && listing.parent) openDir(listing.parent); return; }
+    if (!playing) { if (k === 'Backspace' && view === 'folders' && listing && listing.parent) openDir(listing.parent); return; }
     if (e.ctrlKey && k === 'Enter') { handled(); cut(); return; }
     if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyTime(v.currentTime, 'Время', $('tCur')); return; }
     if (e.ctrlKey || e.altKey || e.metaKey) { if (e.altKey && k === 'ArrowLeft') showPlayer(false); return; }
@@ -1125,9 +1188,15 @@
       if (i.accent) applyAccent(i.accent);
       updateCutState();
     });
+    document.body.classList.toggle('all', view === 'all');
+    for (const b of $('pivot').children) b.classList.toggle('on', b.dataset.view === view);
     const startFile = await N.initialFile();
     if (startFile) { curDir = startFile.replace(/\\[^\\]+$/, ''); store.set('dir', curDir); loadFile(startFile); }
-    else openDir(store.get('dir', null));
+    else { curDir = store.get('dir', null); setView(view); }
+    N.media().then(r => {
+      media = r.media; scanning = scanning || r.scanning;
+      if (view === 'all' && !document.body.classList.contains('play')) renderAll();
+    }, () => {});
     updateCutState();
     N.getUpdate().then(onUpdate, () => {}); // in case the check finished before the page loaded
   })();

@@ -280,6 +280,57 @@ function init() {
     return { dir, parent: parent === dir ? null : parent, dirs, files };
   }
 
+  // ---------- "all videos": background scan of local disks ----------
+  // Runs once per launch, a few directories at a time (fs work happens on libuv threads, the UI never waits).
+  // The last result is cached, so the tab shows instantly and is refreshed when the new scan finishes.
+  const SKIP_DIRS = new Set(['windows', 'program files', 'program files (x86)', 'programdata', 'appdata', 'system volume information',
+    'recovery', 'perflogs', 'msocache', 'windowsapps', 'xboxgames', 'steamapps', 'steamlibrary', 'epic games', 'riot games',
+    'node_modules', 'onedrivetemp', 'intel', 'amd', 'nvidia', 'drivers', 'temp', 'tmp', 'cache', 'caches']);
+  const MIN_VIDEO = 1024 * 1024;     // smaller files are UI animations, previews and the like
+  const MAX_VIDEOS = 20000;
+  const mediaFile = path.join(app.getPath('userData'), 'media.json');
+  let media = (() => { try { return JSON.parse(fs.readFileSync(mediaFile, 'utf8')); } catch { return null; } })();
+  let scan = null;
+
+  function localDrives() {
+    return new Promise(resolve => {
+      const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        '(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3").DeviceID'], { windowsHide: true });
+      let out = '';
+      p.stdout.on('data', d => { out += d; });
+      p.on('error', () => resolve(['C:']));
+      p.on('close', () => { const l = out.match(/[A-Z]:/g); resolve(l && l.length ? l : ['C:']); });
+    });
+  }
+  async function scanMedia() {
+    if (scan) return;
+    scan = { dirs: 0, found: 0 };
+    const found = [], queue = (await localDrives()).map(d => d + '\\');
+    const sendProgress = () => win && win.webContents.send('media-progress', { dirs: scan.dirs, found: found.length });
+    let lastSent = 0;
+    async function visit(dir) {
+      let entries;
+      try { entries = await fsp.readdir(dir, { withFileTypes: true }); } catch { return; }
+      scan.dirs++;
+      for (const e of entries) {
+        const n = e.name, full = path.join(dir, n);
+        if (e.isDirectory()) {   // junctions/symlinks report as links, not directories: no loops
+          if (n[0] !== '$' && n[0] !== '.' && !SKIP_DIRS.has(n.toLowerCase())) queue.push(full);
+        } else if (e.isFile() && isVideo(n) && found.length < MAX_VIDEOS) {
+          try { const st = await fsp.stat(full); if (st.size >= MIN_VIDEO) found.push({ name: n, path: full, size: st.size, mtime: st.mtimeMs }); } catch { }
+        }
+      }
+      if (Date.now() - lastSent > 500) { lastSent = Date.now(); sendProgress(); }
+    }
+    const worker = async () => { while (queue.length) await visit(queue.shift()); };
+    try {
+      await Promise.all([worker(), worker(), worker()]);
+      media = { scanned: Date.now(), files: found };
+      fs.writeFile(mediaFile, JSON.stringify(media), () => {});
+      if (win) win.webContents.send('media', media);
+    } finally { scan = null; }
+  }
+
   // ---------- updates ----------
   // One small request to the GitHub API at start and every 6 hours; nothing is downloaded until the user asks.
   const CHECK_EVERY = 6 * 3600e3;
@@ -367,6 +418,8 @@ function init() {
   ipcMain.handle('reveal', (_, p) => { if (p) shell.showItemInFolder(p); });
   ipcMain.handle('open-site', () => shell.openExternal(SITE_URL));
   ipcMain.handle('copy', (_, text) => clipboard.writeText(String(text).slice(0, 100)));
+  ipcMain.handle('media', () => ({ media, scanning: !!scan }));
+  ipcMain.handle('rescan', () => { scanMedia(); });
   ipcMain.handle('get-update', () => publicUpdate());
   ipcMain.handle('install-update', () => downloadAndInstall());
   ipcMain.handle('initial-file', () => { const f = pendingFile; pendingFile = null; return f; });
@@ -460,6 +513,7 @@ function init() {
     Menu.setApplicationMenu(null);
     createWindow();
     if ((!process.env.OBSP_SCREENSHOT && !process.env.OBSP_RECORD) || process.env.OBSP_CHECK_UPDATES) scheduleChecks();
+    setTimeout(scanMedia, 2000); // let the window and the first thumbnails go first
     if (fs.existsSync(ffmpegPath) || ffmpegPath === 'ffmpeg') setTimeout(pickEncoder, 3000);
   });
 
