@@ -82,7 +82,23 @@ jobs:
         uses: crazy-max/ghaction-virustotal@v4
         with:
           vt_api_key: ${{ env.VT_API_KEY }}
-          update_release_body: true
           files: |
             out/RPp-Setup.exe
             out/RPp-portable.zip
+
+      # update_release_body of the action only works on "release" events, so add the report links ourselves
+      # (the site reads the RPp-Setup.exe link from the release body)
+      - name: Link VirusTotal reports in the release notes
+        if: ${{ env.VT_API_KEY != '' }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $links = Get-Content out/SHA256SUMS.txt | ForEach-Object {
+            $h, $n = $_ -split '\s+', 2
+            if ($n -ne 'SHA256SUMS.txt') { "- [$n на VirusTotal](https://www.virustotal.com/gui/file/$h)" }
+          }
+          $body = (gh release view "${{ github.ref_name }}" --json body -q .body) -join "`n"
+          $body += "`n`n**Отчёты VirusTotal** (анализ занимает пару минут после выхода версии):`n" + ($links -join "`n") + "`n"
+          $body | Set-Content body.md -Encoding utf8
+          gh release edit "${{ github.ref_name }}" --notes-file body.md
