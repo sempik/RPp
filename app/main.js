@@ -61,6 +61,45 @@ async function fetchLatestRelease() {
   };
 }
 
+// ---------- complaints and suggestions ----------
+// Sent to the author's server, which keeps them and forwards them to his Telegram.
+// The server has its own self-signed certificate; trusting only it means nobody can sit in between.
+const FEEDBACK_URL = 'https://148.253.209.182:8097/feedback';
+const FEEDBACK_CERT = `-----BEGIN CERTIFICATE-----
+MIIBlTCCATqgAwIBAgIUANrIvn0knyhkQBLfg9WUFPi37zMwCgYIKoZIzj0EAwIw
+FzEVMBMGA1UEAwwMUlBwIGZlZWRiYWNrMB4XDTI2MTAxODIyMTM1MVoXDTM2MTAx
+NTIyMTM1MVowFzEVMBMGA1UEAwwMUlBwIGZlZWRiYWNrMFkwEwYHKoZIzj0CAQYI
+KoZIzj0DAQcDQgAEyFcyXHSZnvkcXMvk1bbu00bR1RwRB2dVvrBK1akWtCQ45nIZ
+UDhhctqvQTzrKzAogtMnfHubY22f6GLfv4sLqqNkMGIwHQYDVR0OBBYEFEARP+UA
+h1S2IQ8QNCt+ttsZrF6MMB8GA1UdIwQYMBaAFEARP+UAh1S2IQ8QNCt+ttsZrF6M
+MA8GA1UdEwEB/wQFMAMBAf8wDwYDVR0RBAgwBocElP3RtjAKBggqhkjOPQQDAgNJ
+ADBGAiEA/VwZqwNo6kfaVMG66Bl1GYpuXaMYfpAcVo3r1rgDMyICIQCYvi8kGJNu
+TwiBYHMiDSWgvPcvDNwJBUbC4xQZUZzE6A==
+-----END CERTIFICATE-----`;
+function sendFeedback({ kind, text, contact, withSystem }) {
+  const body = JSON.stringify({
+    kind, text: String(text || '').slice(0, 4000), contact: String(contact || '').slice(0, 200),
+    ...(withSystem ? { version: app.getVersion(), os: `Windows ${os.release()}` } : {}),
+  });
+  return new Promise((resolve, reject) => {
+    const req = https.request(FEEDBACK_URL, {
+      method: 'POST', ca: FEEDBACK_CERT, timeout: 15000,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'RPp' },
+    }, res => {
+      let data = '';
+      res.setEncoding('utf8');
+      res.on('data', d => { data += d; });
+      res.on('end', () => {
+        let r = {}; try { r = JSON.parse(data); } catch { }
+        res.statusCode === 200 ? resolve(r) : reject(new Error(r.error || 'Сервер ответил ошибкой ' + res.statusCode));
+      });
+    });
+    req.on('timeout', () => req.destroy(new Error('Сервер не отвечает. Проверьте интернет и попробуйте ещё раз.')));
+    req.on('error', e => reject(/ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EHOSTUNREACH/.test(e.code || '') ? new Error('Сервер не отвечает. Проверьте интернет и попробуйте ещё раз.') : e));
+    req.end(body);
+  });
+}
+
 // The app used to be called "OBS Player": carry its settings and thumbnails over once.
 try {
   const oldData = path.join(app.getPath('appData'), 'OBS Player');
@@ -137,6 +176,8 @@ function init() {
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
       'Cache-Control': 'no-store',
+      // lets the page read frames (minimap, "text from the frame"); the random token still guards access
+      'Access-Control-Allow-Origin': '*',
     };
     if (m) headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
     res.writeHead(m ? 206 : 200, headers);
@@ -417,7 +458,117 @@ function init() {
   });
   ipcMain.handle('reveal', (_, p) => { if (p) shell.showItemInFolder(p); });
   ipcMain.handle('open-site', () => shell.openExternal(SITE_URL));
-  ipcMain.handle('copy', (_, text) => clipboard.writeText(String(text).slice(0, 100)));
+  ipcMain.handle('copy', (_, text) => clipboard.writeText(String(text).slice(0, 20000)));
+  // Why can't the player open a file? "growing" = OBS is still writing it; otherwise ffmpeg's first complaint.
+  ipcMain.handle('probe', async (_, p) => {
+    if (!isVideo(p)) return { error: 'not a video' };
+    const size = async () => { try { return (await fsp.stat(p)).size; } catch { return -1; } };
+    const a = await size();
+    if (a < 0) return { missing: true };
+    await new Promise(r => setTimeout(r, 1500));
+    if ((await size()) !== a) return { growing: true };
+    const error = await new Promise(resolve => {
+      const pr = spawn(ffmpegPath, ['-hide_banner', '-v', 'error', '-i', p, '-t', '0.5', '-f', 'null', '-'], { windowsHide: true });
+      let err = '';
+      pr.stderr.on('data', d => { err += d; });
+      pr.on('error', () => resolve(null));
+      pr.on('close', () => resolve(err.trim().split(/\r?\n/)[0] || null));
+    });
+    return { error };
+  });
+  // ---------- playable copies of files the player can't read ----------
+  // "remux": the codec is fine but the container isn't (FLV, MPEG-TS): copy streams into MP4, takes seconds.
+  // "encode": the codec itself can't be decoded here (ProRes, HEVC without GPU support): re-encode to H.264.
+  // Copies live in userData/playable, keyed by path+size+mtime; old ones are removed.
+  const playDir = path.join(app.getPath('userData'), 'playable');
+  let conv = null;
+  async function startPlayable(src, mode) {
+    if (conv && conv.state === 'running') { if (conv.src === src && conv.mode === mode) return; conv.proc.kill(); }
+    const st = await fsp.stat(src);
+    const key = crypto.createHash('sha1').update(`${src}|${st.size}|${st.mtimeMs}|${mode}`).digest('hex');
+    const out = path.join(playDir, key + '.mp4');
+    if (fs.existsSync(out)) { conv = { src, mode, state: 'done', percent: 100, out }; return; }
+    await fsp.mkdir(playDir, { recursive: true });
+    const tmp = out + '.part';
+    const enc = mode === 'encode' ? await pickEncoder() : null;
+    const args = ['-hide_banner', '-nostats', '-y', '-i', src, '-map', '0:v:0', '-map', '0:a?',
+      ...(enc ? enc.args : ['-c:v', 'copy']), '-c:a', 'aac', '-b:a', '192k', '-f', 'mp4', '-progress', 'pipe:1', tmp];
+    const proc = spawn(ffmpegPath, args, { windowsHide: true });
+    const c = conv = { src, mode, proc, state: 'running', percent: 0, out, duration: 0, log: '' };
+    proc.stderr.on('data', d => {
+      c.log = (c.log + d).slice(-4000);
+      const m = !c.duration && /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(c.log);
+      if (m) c.duration = +m[1] * 3600 + +m[2] * 60 + +m[3];
+    });
+    proc.stdout.on('data', d => {
+      const all = [...String(d).matchAll(/out_time_us=(\d+)/g)];
+      if (all.length && c.duration) c.percent = Math.min(99, Number(all[all.length - 1][1]) / 1e6 / c.duration * 100);
+    });
+    proc.on('error', e => { c.state = 'error'; c.log += e.message; });
+    proc.on('close', code => {
+      if (code === 0) { try { fs.renameSync(tmp, out); c.state = 'done'; c.percent = 100; } catch (e) { c.state = 'error'; c.log += e.message; } }
+      else { fs.rm(tmp, { force: true }, () => {}); if (c.state === 'running') c.state = 'error'; }
+    });
+  }
+  function cleanPlayable() {
+    // keep a week of copies and at most 20 GB
+    fs.readdir(playDir, (e, names) => {
+      if (e) return;
+      const files = names.map(n => { const f = path.join(playDir, n); try { const s = fs.statSync(f); return { f, t: s.mtimeMs, size: s.size }; } catch { return null; } })
+        .filter(Boolean).sort((a, b) => b.t - a.t);
+      let total = 0;
+      for (const x of files) { total += x.size; if (Date.now() - x.t > 7 * 864e5 || total > 20 * 2 ** 30 || x.f.endsWith('.part')) fs.rm(x.f, { force: true }, () => {}); }
+    });
+  }
+  ipcMain.handle('playable', (_, src, mode) => (isVideo(src) ? startPlayable(src, mode === 'encode' ? 'encode' : 'remux') : null));
+  ipcMain.handle('playable-status', () => conv && { src: conv.src, mode: conv.mode, state: conv.state, percent: Math.round(conv.percent), out: conv.out,
+    error: conv.state === 'error' ? conv.log.trim().split(/\r?\n/).slice(-2).join(' ') : null });
+  ipcMain.handle('playable-cancel', () => { if (conv && conv.state === 'running') { conv.state = 'cancelled'; conv.proc.kill(); } });
+
+  // ---------- text from the frame (Windows' built-in OCR, the one the Snipping Tool uses) ----------
+  // Nothing runs until the button is pressed; then one short PowerShell call reads a PNG of the visible frame.
+  // The script (ocr.ps1) is handed to PowerShell on stdin and run as one block, so no execution-policy
+  // changes are needed; the image path comes via an environment variable.
+  const OCR_RUN = '& ([scriptblock]::Create([Console]::In.ReadToEnd()))';
+  async function ocr(dataUrl) {
+    const m = /^data:image\/png;base64,(.+)$/.exec(String(dataUrl));
+    if (!m) throw new Error('Нет кадра');
+    const img = path.join(os.tmpdir(), `rpp-ocr-${process.pid}.png`);
+    await fsp.writeFile(img, Buffer.from(m[1], 'base64'));
+    try {
+      const out = await new Promise((resolve, reject) => {
+        const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', OCR_RUN],
+          { windowsHide: true, env: { ...process.env, RPP_OCR_IMAGE: img } });
+        let so = '', se = '';
+        p.stdout.on('data', d => { so += d; });
+        p.stderr.on('data', d => { se += d; });
+        p.on('error', () => reject(new Error('Не удалось запустить распознавание текста Windows')));
+        p.on('close', () => resolve({ so, se }));
+        const t = setTimeout(() => p.kill(), 20000);
+        p.on('close', () => clearTimeout(t));
+        p.stdin.end(fs.readFileSync(path.join(__dirname, 'ocr.ps1'), 'utf8'));
+      });
+      const json = out.so.split(/\r?\n/).reverse().find(l => l.startsWith('{'));
+      if (!json) throw new Error('Распознавание текста Windows недоступно на этом компьютере. ' + (out.se.trim().split(/\r?\n/)[0] || ''));
+      const r = JSON.parse(json);
+      if (r.error === 'nolang') throw new Error('nolang');
+      return { lang: r.lang, lines: [].concat(r.lines || []).filter(l => l && l.text) };
+    } finally { fs.rm(img, { force: true }, () => {}); }
+  }
+  ipcMain.handle('ocr', (_, dataUrl) => ocr(dataUrl));
+
+  // Delete = move to the Windows Recycle Bin. The player releases the file first; Windows may still hold it
+  // for a moment (our video server, a thumbnail being made), so retry briefly.
+  ipcMain.handle('trash', async (_, p) => {
+    if (!isVideo(p) || !fs.existsSync(p)) throw new Error('Файл не найден');
+    for (let i = 0; ; i++) {
+      try { await shell.trashItem(p); break; }
+      catch (e) { if (i >= 8) throw new Error('Не удалось удалить: файл занят другой программой (например, OBS ещё записывает его).'); await new Promise(r => setTimeout(r, 400)); }
+    }
+    if (media) { media.files = media.files.filter(f => f.path !== p); fs.writeFile(mediaFile, JSON.stringify(media), () => {}); }
+    return true;
+  });
+  ipcMain.handle('feedback', (_, m) => sendFeedback(m));
   ipcMain.handle('media', () => ({ media, scanning: !!scan }));
   ipcMain.handle('rescan', () => { scanMedia(); });
   ipcMain.handle('get-update', () => publicUpdate());
@@ -469,6 +620,8 @@ function init() {
     // Dev hooks for smoke tests and site demos:
     //   OBSP_SCREENSHOT=<png>  capture the window after OBSP_EVAL finishes, then exit
     //   OBSP_RECORD=<dir>      capture frames (+ frames.txt with timings) while OBSP_EVAL runs, then exit
+    //   OBSP_LOG=<file>        append the page's console output to a file
+    if (process.env.OBSP_LOG) win.webContents.on('console-message', e => fs.appendFileSync(process.env.OBSP_LOG, (e.message || '') + '\n'));
     const shot = process.env.OBSP_SCREENSHOT, rec = process.env.OBSP_RECORD;
     if (shot || rec) {
       if (process.env.OBSP_SIZE) { const [w, h] = process.env.OBSP_SIZE.split('x').map(Number); win.setContentSize(w, h); }
@@ -514,11 +667,13 @@ function init() {
     createWindow();
     if ((!process.env.OBSP_SCREENSHOT && !process.env.OBSP_RECORD) || process.env.OBSP_CHECK_UPDATES) scheduleChecks();
     setTimeout(scanMedia, 2000); // let the window and the first thumbnails go first
+    setTimeout(cleanPlayable, 10000);
     if (fs.existsSync(ffmpegPath) || ffmpegPath === 'ffmpeg') setTimeout(pickEncoder, 3000);
   });
 
   app.on('window-all-closed', () => {
     if (job && job.state === 'running') { job.cancelled = true; job.proc.kill(); }
+    if (conv && conv.state === 'running') { conv.state = 'cancelled'; conv.proc.kill(); }
     server.close();
     app.quit();
   });

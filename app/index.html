@@ -111,6 +111,10 @@
   .tile .watched { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
   .tile .name { margin-top: 8px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .tile .sub { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tile .thumb video.preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .3s; }
+  .tile .thumb video.preview.on { opacity: 1; }
+  .tile.previewing .play { opacity: 0 !important; }
+  .tile .dur, .tile .watched { z-index: 1; }
   .tile.folder .thumb { display: grid; place-items: center; background: var(--layer); }
   .tile.folder .thumb .ic { font-size: 40px; color: #ffd75e; }
   .tile.current .thumb { box-shadow: 0 0 0 2px var(--accent); }
@@ -126,6 +130,30 @@
   body.play.idle .player, body.play.idle .titlebar ~ * { }
   :fullscreen.player { inset: 0; }
   .stage { position: absolute; inset: 0; overflow: hidden; }
+  .stage-msg { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); z-index: 5; display: none; gap: 14px; align-items: flex-start;
+    width: min(520px, calc(100% - 32px)); padding: 18px 20px; }
+  .stage-msg.show { display: flex; }
+  .stage-msg .ic { font-size: 22px; margin-top: 2px; color: var(--accent); }
+  .stage-msg.err .ic { color: var(--danger); }
+  .stage-msg.wait .ic { animation: rec-pulse 1.6s ease-in-out infinite; color: #ff5f57; }
+  @keyframes rec-pulse { 50% { opacity: .35; } }
+  .stage-msg b { display: block; font: 600 16px var(--display); margin-bottom: 4px; }
+  .stage-msg span:not(.ic) { color: var(--text-2); font-size: 13px; line-height: 1.45; }
+  .stage-msg > div { flex: 1; min-width: 0; }
+  .stage-msg .upd-bar { margin-top: 12px; }
+  .stage-acts { display: flex; gap: 8px; margin-top: 14px; }
+  .stage-acts:empty { display: none; }
+  .stage-msg.busy .ic { color: var(--accent); animation: rec-pulse 1.6s ease-in-out infinite; }
+  .ocr { position: absolute; inset: 0; z-index: 4; display: none; background: #00000059; }
+  .ocr.show { display: block; }
+  .ocr button { position: absolute; padding: 0; border: 2px solid var(--accent); border-radius: 3px; background: #ffffff1a; cursor: copy;
+    box-shadow: 0 0 0 1px #0008; transition: background .12s; }
+  .ocr button:hover { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .ocr button.copied { background: color-mix(in srgb, var(--accent) 60%, transparent); }
+  .ocr-bar { position: absolute; left: 50%; top: 16px; transform: translateX(-50%); z-index: 6; display: none; align-items: center; gap: 12px;
+    padding: 6px 6px 6px 16px; white-space: nowrap; font-size: 13px; }
+  .ocr-bar.show { display: flex; }
+  .ocr-bar .ib { width: 32px; height: 32px; font-size: 12px; }
   .stage.zoomed { cursor: grab; }
   .stage.panning { cursor: grabbing; }
   .stage video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; will-change: transform; }
@@ -275,6 +303,20 @@
   .upd-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
   .upd-msg { margin-top: 10px; color: var(--text-2); font-size: 12px; min-height: 16px; }
   .upd-msg.err { color: var(--danger); }
+  .btn.danger { background: #c42b1c; color: #fff; border-color: transparent; }
+  .btn.danger:hover { background: #b0261a; }
+  .btn.danger:disabled { background: #ffffff29; color: #ffffff87; }
+  .mi.danger, .mi.danger .ic { color: var(--danger); }
+  .del-name { font-weight: 600; word-break: break-all; margin: -4px 0 10px; }
+  .ctx { position: fixed; z-index: 58; display: none; min-width: 220px; padding: 4px; }
+  .ctx.show { display: block; }
+  #fb textarea, #fb input:not([type]) { display: block; width: 100%; box-sizing: border-box; margin-top: 10px; padding: 8px 10px; resize: vertical;
+    background: #1e1e1e; color: var(--text); border: 1px solid var(--stroke); border-bottom-color: #ffffff60; border-radius: 4px; font: inherit; outline: none; }
+  #fb textarea:focus, #fb input:not([type]):focus { border-bottom: 2px solid var(--accent); }
+  #fb textarea { min-height: 120px; }
+  .fb-check { display: flex; align-items: center; gap: 8px; margin-top: 12px; color: var(--text-2); font-size: 13px; cursor: pointer; }
+  .fb-check input { accent-color: var(--accent); margin: 0; }
+  .fb-note { font-size: 12px; color: var(--text-3); max-width: 260px; }
   .upd-pop { position: fixed; right: 20px; bottom: 20px; z-index: 55; display: none; align-items: center; gap: 12px; padding: 10px 10px 10px 16px; }
   .upd-pop.show { display: flex; animation: pop-in .25s ease-out; }
   .upd-pop > .ic { color: var(--accent); font-size: 16px; }
@@ -299,6 +341,8 @@
     <div class="spacer"></div>
     <div class="actions">
       <button class="btn update" id="bUpdate"><span class="ic">&#xE896;</span><span id="updTxt"></span></button>
+      <button class="btn subtle" id="bBug" title="Что-то не работает? Напишите автору"><span class="ic">&#xEBE8;</span>Жалоба</button>
+      <button class="btn subtle" id="bIdea" title="Чего не хватает в RPp? Напишите автору"><span class="ic">&#xEA80;</span>Пожелание</button>
       <button class="btn" id="bOpen" title="Ctrl+O"><span class="ic">&#xE8E5;</span>Открыть файл</button>
       <button class="btn subtle" id="bRefresh" title="Обновить (F5)"><span class="ic">&#xE72C;</span></button>
     </div>
@@ -313,7 +357,10 @@
 <!-- ================= player ================= -->
 <section class="player" id="player">
   <div class="stage" id="stage">
-    <video id="v" preload="auto" playsinline></video>
+    <video id="v" preload="auto" playsinline crossorigin="anonymous"></video>
+    <div class="ocr" id="ocr"></div>
+    <div class="ocr-bar acrylic" id="ocrBar"><span id="ocrInfo"></span><button class="btn" id="bOcrAll">Копировать всё</button><button class="ib ic" id="bOcrX" title="Закрыть (Esc)">&#xE711;</button></div>
+    <div class="stage-msg acrylic" id="stageMsg"><span class="ic" id="stageIc"></span><div><b id="stageTitle"></b><span id="stageText"></span><div class="upd-bar" id="stageBar"><i></i></div><div class="stage-acts" id="stageActs"></div></div></div>
     <div class="zoomchip"><span id="zoomVal">100%</span><button class="ic" id="bZOut" title="Уменьшить (−)">&#xE71F;</button><button class="ic" id="bZIn2" title="Увеличить (+)">&#xE8A3;</button><button class="ic" id="bZReset" title="Исходный размер (0)">&#xE711;</button></div>
     <canvas class="nav" id="nav"></canvas>
     <div class="flash ic" id="flash">&#xE768;</div>
@@ -374,6 +421,7 @@
         <button class="ib ic" id="bFwd30" title="Вперёд на 30 с (L)">&#xED3D;</button>
       </div>
       <div class="grp r">
+        <button class="ib ic" id="bOcr" title="Текст с кадра: скопировать надписи (C)">&#xE8D2;</button>
         <button class="ib ic" id="bTrim" title="Обрезать (T)">&#xE8C6;</button>
         <button class="ib ic" id="bZIn" title="Увеличить (+ или колесо мыши)">&#xE8A3;</button>
         <button class="ib ic" id="bFull" title="Во весь экран (F)">&#xE740;</button>
@@ -391,7 +439,11 @@
       <div class="msep"></div>
       <button class="mi" id="miPixel"><span class="ic">&#xE8B3;</span>Чёткие пиксели при увеличении<span class="chk ic">&#xE73E;</span></button>
       <button class="mi" id="miFolder"><span class="ic">&#xE838;</span>Открыть папку с файлом</button>
+      <button class="mi danger" id="miDelete"><span class="ic">&#xE74D;</span>Удалить видео<span class="k">Del</span></button>
       <button class="mi" id="miKeys"><span class="ic">&#xE765;</span>Сочетания клавиш<span class="k">?</span></button>
+      <div class="msep"></div>
+      <button class="mi" id="miBug"><span class="ic">&#xEBE8;</span>Сообщить о проблеме</button>
+      <button class="mi" id="miIdea"><span class="ic">&#xEA80;</span>Предложить идею</button>
     </div>
   </div>
 </section>
@@ -414,6 +466,8 @@
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd></span><span>Скопировать текущее время</span>
       <span><kbd>F</kbd></span><span>Во весь экран и выход из него</span>
       <span><kbd>Esc</kbd> <kbd>Backspace</kbd></span><span>Вернуться в библиотеку</span>
+      <span><kbd>C</kbd></span><span>Текст с кадра: скопировать надписи</span>
+      <span><kbd>Del</kbd></span><span>Удалить видео в корзину</span>
       <span><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span>Открыть файл</span>
     </div>
     <div class="foot"><span id="ver"></span><button class="btn accent" id="bHelpClose">Закрыть</button></div>
@@ -431,6 +485,41 @@
       <span class="spacer"></span>
       <button class="btn" id="bUpdLater">Позже</button>
       <button class="btn accent" id="bUpdGo"></button>
+    </div>
+  </div>
+</div>
+<div class="dialog" id="del">
+  <div class="card acrylic">
+    <h3>Удалить видео?</h3>
+    <div class="del-name" id="delName"></div>
+    <div class="upd-sub" id="delSub"></div>
+    <div class="upd-msg" id="delMsg"></div>
+    <div class="foot">
+      <span class="spacer"></span>
+      <button class="btn" id="bDelCancel">Отмена</button>
+      <button class="btn danger" id="bDelGo">Удалить</button>
+    </div>
+  </div>
+</div>
+<div class="ctx acrylic" id="ctx">
+  <button class="mi" id="ctxOpen"><span class="ic">&#xE768;</span>Смотреть</button>
+  <button class="mi" id="ctxFolder"><span class="ic">&#xE838;</span>Открыть папку с файлом</button>
+  <div class="msep"></div>
+  <button class="mi danger" id="ctxDelete"><span class="ic">&#xE74D;</span>Удалить</button>
+</div>
+<div class="dialog" id="fb">
+  <div class="card acrylic">
+    <h3 id="fbTitle"></h3>
+    <div class="upd-sub" id="fbSub"></div>
+    <textarea id="fbText" maxlength="4000" rows="6"></textarea>
+    <input id="fbContact" maxlength="200" placeholder="Контакт для ответа: Telegram или почта (необязательно)">
+    <label class="fb-check"><input type="checkbox" id="fbSys" checked> Приложить версию RPp и Windows</label>
+    <div class="upd-msg" id="fbMsg"></div>
+    <div class="foot">
+      <span class="fb-note">Сообщение получит автор RPp в Telegram. Больше ничего не отправляется.</span>
+      <span class="spacer"></span>
+      <button class="btn" id="bFbCancel">Отмена</button>
+      <button class="btn accent" id="bFbSend">Отправить</button>
     </div>
   </div>
 </div>
@@ -502,7 +591,7 @@
     document.body.classList.toggle('play', on);
     N.chromeMode(on ? 'player' : 'library');
     if (!on) {
-      v.pause(); savePos(); closeMenu();
+      v.pause(); savePos(); closeMenu(); clearStageMsg();
       if (document.fullscreenElement) document.exitFullscreen();
       $('docTitle').textContent = ''; document.title = 'RPp';
       if (curDir || view === 'all') refreshView(true);
@@ -598,6 +687,9 @@
         `<span class="dur" style="display:none"></span><span class="watched"></span></div>` +
         `<div class="name">${esc(title)}</div><div class="sub">${esc(folder + fmtSize(x.size))}</div>`;
       b.onclick = () => loadFile(x.path);
+      b.oncontextmenu = e => { stopPreview(); showCtx(e, x); };
+      b.onpointerenter = () => schedulePreview(b);
+      b.onpointerleave = () => stopPreview();
       dayTiles.appendChild(b);
       io.observe(b);
     }
@@ -627,6 +719,7 @@
       : media ? `Найдено видео: ${n.toLocaleString('ru')}. Системные папки и папки игр пропущены.` : '';
   }
   function renderAll() {
+    stopPreview();
     renderScanline();
     $('groups').innerHTML = '';
     if (media && media.files.length) return renderFiles(media.files, true);
@@ -638,7 +731,41 @@
   N.onMediaProgress(p => { scanning = true; scanInfo = p; if (view === 'all') { renderScanline(); if (!media) renderAll(); } });
   N.onMedia(m => { media = m; scanning = false; scanInfo = null; if (view === 'all' && !document.body.classList.contains('play')) refreshView(true); });
 
+  // ---------- hover preview: hold the cursor on a tile and the video plays inside it, muted ----------
+  const PREVIEW_DELAY = 2000;
+  let previewTimer = null, previewTile = null;
+  function schedulePreview(tile) {
+    stopPreview();
+    previewTimer = setTimeout(() => startPreview(tile), PREVIEW_DELAY);
+  }
+  function startPreview(tile) {
+    if (!tile.isConnected || document.body.classList.contains('play')) return;
+    const p = tile.dataset.path, t = thumbCache.get(p), d = t && t.duration;
+    const pv = document.createElement('video');
+    pv.className = 'preview'; pv.muted = true; pv.loop = true; pv.playsInline = true; pv.preload = 'auto';
+    // start where the user left off, otherwise a little into the recording (the first seconds are often a menu)
+    const pos = store.get('pos', {})[p];
+    const start = pos > 5 && (!d || pos < d - 5) ? pos : d ? Math.min(d * 0.1, 60) : 0;
+    pv.src = videoBase + encodeURIComponent(p) + (start ? '#t=' + start.toFixed(1) : '');
+    pv.onplaying = () => pv.classList.add('on');
+    pv.onerror = () => pv.remove();          // e.g. FLV: no preview, the tile stays as it was
+    tile.querySelector('.thumb').appendChild(pv);
+    tile.classList.add('previewing');
+    previewTile = tile;
+    pv.play().catch(() => {});
+  }
+  function stopPreview() {
+    clearTimeout(previewTimer); previewTimer = null;
+    if (!previewTile) return;
+    const pv = previewTile.querySelector('video.preview');
+    if (pv) { pv.pause(); pv.removeAttribute('src'); pv.load(); pv.remove(); }   // release the file at once
+    previewTile.classList.remove('previewing');
+    previewTile = null;
+  }
+  $('library').addEventListener('scroll', stopPreview, { passive: true });
+
   function renderLibrary(d) {
+    stopPreview();
     $('groups').innerHTML = '';
     if (d.dirs.length) {
       const tiles = group('Папки');
@@ -662,7 +789,9 @@
   function loadFile(path) {
     if (!path) return;
     savePos();
+    stopPreview();
     cur = { path, name: baseName(path) };
+    clearStageMsg();
     v.src = videoBase + encodeURIComponent(path);
     $('docTitle').textContent = cur.name;
     document.title = cur.name + ' — RPp';
@@ -678,9 +807,84 @@
     if (p && p > 5 && p < dur() - 5) { v.currentTime = p; toast('Продолжаем с ' + fmt(p, false)); }
     applyZoom();
   });
-  v.addEventListener('error', () => {
-    if (!v.getAttribute('src')) return;
-    toast('Не удаётся воспроизвести файл: кодек не поддерживается или запись ещё идёт', true);
+  // ---------- files the player can't open ----------
+  let waitTimer = null, convTimer = null;
+  function stageMsg(kind, title, text, acts = []) {
+    const m = $('stageMsg');
+    m.className = 'stage-msg acrylic' + (kind ? ' show ' + kind : '');
+    $('stageBar').classList.remove('show');
+    if (!kind) return;
+    $('stageIc').innerHTML = kind === 'wait' ? '&#xE7C8;' : kind === 'busy' ? '&#xE895;' : '&#xE783;';
+    $('stageTitle').textContent = title; $('stageText').textContent = text;
+    $('stageActs').innerHTML = '';
+    for (const [label, fn, accent] of acts) {
+      const b = document.createElement('button'); b.className = 'btn' + (accent ? ' accent' : '');
+      b.textContent = label; b.onclick = fn; $('stageActs').appendChild(b);
+    }
+  }
+  function clearStageMsg() {
+    clearTimeout(waitTimer); waitTimer = null;
+    if (convTimer) { clearInterval(convTimer); convTimer = null; N.playableCancel(); }
+    stageMsg(null);
+  }
+  v.addEventListener('loadedmetadata', () => {
+    if (v.videoWidth) { waitTimer = null; if (!convTimer) stageMsg(null); return; }
+    // sound plays but no picture: the video codec can't be decoded here (e.g. ProRes, HEVC without GPU support)
+    if (cur && cur.mode !== 'encode') offerEncode();
+  });
+
+  // Copy the file into something the player can read, show progress, then play the copy.
+  function makePlayable(mode) {
+    const file = cur.path;
+    cur.mode = mode;
+    const title = mode === 'remux' ? 'Подготавливаю файл' : 'Перекодирую для просмотра';
+    const text = mode === 'remux'
+      ? 'Этот формат RPp не читает напрямую. Перепаковываю видео в MP4 без потери качества, это займёт несколько секунд. Исходный файл не меняется.'
+      : 'Видеокарта или RPp не умеют показывать этот кодек. Делаю копию в H.264 для просмотра; на длинных записях это может занять несколько минут. Исходный файл не меняется.';
+    stageMsg('busy', title + '…', text, [['Отмена', () => { clearStageMsg(); stageMsg('err', 'Отменено', 'Файл не открыт.'); }]]);
+    $('stageBar').classList.add('show'); $('stageBar').firstChild.style.width = '0%';
+    N.playable(file, mode).then(() => {
+      convTimer = setInterval(async () => {
+        const s = await N.playableStatus().catch(() => null);
+        if (!s || !cur || cur.path !== file || s.src !== file) return;
+        $('stageBar').firstChild.style.width = s.percent + '%';
+        $('stageTitle').textContent = `${title}… ${s.percent}%`;
+        if (s.state === 'running') return;
+        clearInterval(convTimer); convTimer = null;
+        if (s.state === 'done') { stageMsg(null); v.src = videoBase + encodeURIComponent(s.out); v.play().catch(() => {}); }
+        else if (s.state === 'error') mode === 'remux' ? offerEncode() : stageMsg('err', 'Не удалось перекодировать', s.error || '');
+      }, 400);
+    }, e => stageMsg('err', 'Не удалось подготовить файл', e.message));
+  }
+  function offerEncode() {
+    v.pause();
+    stageMsg('err', 'Этот кодек здесь не воспроизводится', 'Видеокарта или RPp не умеют показывать видео в таком кодеке. Можно сделать копию в H.264 только для просмотра: исходный файл не изменится, а обрезка будет из оригинала.',
+      [['Перекодировать для просмотра', () => makePlayable('encode'), true]]);
+  }
+
+  v.addEventListener('error', async () => {
+    if (!v.getAttribute('src') || !cur) return;
+    const file = cur.path, reason = v.error && v.error.message || '';
+    if (cur.mode === 'remux') return offerEncode();      // even the MP4 copy fails: it's the codec
+    if (cur.mode === 'encode') return stageMsg('err', 'Не удаётся воспроизвести файл', reason);
+    if (!waitTimer) stageMsg('wait', 'Проверяю файл…', ''); // keep "recording" on screen between retries
+    waitTimer = null;
+    const p = await N.probe(file).catch(() => ({}));
+    if (!cur || cur.path !== file || !document.body.classList.contains('play')) return;
+    if (p.growing) {
+      // OBS is still writing: an MP4 gets its index only when recording stops. Retry until the file stops growing.
+      stageMsg('wait', 'Запись ещё идёт', 'OBS ещё записывает этот файл. MP4 можно открыть только после остановки записи. Как только вы её остановите, видео откроется само.');
+      // a fresh URL each time: Chromium remembers that the old one failed
+      waitTimer = setTimeout(() => { if (cur && cur.path === file) { v.src = videoBase + encodeURIComponent(file) + '&retry=' + Date.now(); v.play().catch(() => {}); } }, 3000);
+    } else if (p.missing) {
+      stageMsg('err', 'Файл не найден', 'Возможно, его переместили или удалили. ' + file);
+    } else if (/moov atom not found/i.test(p.error || '')) {
+      stageMsg('err', 'Запись не дописана', 'OBS не закончил этот файл: запись прервалась (вылет, выключение компьютера). У такого MP4 нет оглавления, и его не откроет ни один плеер. Чтобы так не терять записи, в OBS выберите формат «Гибридный MP4» или MKV.');
+    } else if (/DECODE/.test(reason)) {
+      offerEncode();
+    } else {
+      makePlayable('remux');   // FLV, MPEG-TS and other containers the player can't open
+    }
   });
   function savePos() {
     if (!cur || !dur()) return;
@@ -912,6 +1116,7 @@
     Z.ty = fit(Z.ty, r.H, r.cy, r.ch);
   }
   function applyZoom() {
+    if (typeof closeOcr === 'function') closeOcr();   // boxes would no longer match the picture
     clampPan();
     v.style.transform = `translate(${Z.tx}px, ${Z.ty}px) scale(${Z.s})`;
     $('zoomVal').textContent = Math.round(Z.s * 100) + '%';
@@ -936,7 +1141,7 @@
 
   let pan = null;
   stage.addEventListener('pointerdown', e => {
-    if (e.button !== 0 || e.target.closest('.zoomchip') || e.target === $('nav')) return;
+    if (e.button !== 0 || e.target.closest('.zoomchip, .ocr, .ocr-bar, .stage-msg') || e.target === $('nav')) return;
     pan = { x: e.clientX, y: e.clientY, tx: Z.tx, ty: Z.ty, moved: false };
     stage.setPointerCapture(e.pointerId);
   });
@@ -953,7 +1158,7 @@
     if (wasClick) { if ($('menu').classList.contains('show')) closeMenu(); else togglePlay(); }
   });
   stage.addEventListener('dblclick', e => {
-    if (e.target.closest('.zoomchip') || e.target === $('nav')) return;
+    if (e.target.closest('.zoomchip, .ocr, .ocr-bar, .stage-msg') || e.target === $('nav')) return;
     Z.s > 1 ? resetZoom() : toggleFull();
   });
   $('bZIn').onclick = () => zoomCenter(1.5);
@@ -994,6 +1199,79 @@
   nav.addEventListener('pointermove', e => navDrag && navTo(e));
   nav.addEventListener('pointerup', () => navDrag = false);
 
+  // ---------- text from the frame ----------
+  // Only the visible part of the frame is read: zooming in on small text makes it far more accurate.
+  var ocrBusy = false, ocrOn = false;   // var: applyZoom() may run before this line
+  function visibleSource() {
+    const r = contentRect(), vw = v.videoWidth, vh = v.videoHeight;
+    const toU = (x, t, c, cs) => ((x - t) / Z.s - c) / cs;
+    const u0 = clamp(toU(0, Z.tx, r.cx, r.cw), 0, 1), u1 = clamp(toU(r.W, Z.tx, r.cx, r.cw), 0, 1);
+    const w0 = clamp(toU(0, Z.ty, r.cy, r.ch), 0, 1), w1 = clamp(toU(r.H, Z.ty, r.cy, r.ch), 0, 1);
+    return { sx: u0 * vw, sy: w0 * vh, sw: (u1 - u0) * vw, sh: (w1 - w0) * vh, vw, vh, r };
+  }
+  async function readText() {
+    if (ocrBusy || !cur || !v.videoWidth) return;
+    if (ocrOn) return closeOcr();
+    v.pause(); closeMenu();
+    ocrBusy = true;
+    $('bOcr').classList.add('active');
+    stageMsg('busy', 'Ищу текст на кадре…', '');
+    try {
+      const src = visibleSource();
+      // small text reads better a bit enlarged; Windows OCR accepts up to 10000 px
+      const k = clamp(1920 / src.sw, 1, 3);
+      const c = document.createElement('canvas');
+      c.width = Math.round(src.sw * k); c.height = Math.round(src.sh * k);
+      const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
+      g.drawImage(v, src.sx, src.sy, src.sw, src.sh, 0, 0, c.width, c.height);
+      const res = await N.ocr(c.toDataURL('image/png'));
+      stageMsg(null);
+      showOcr(res.lines, src, k);
+    } catch (e) {
+      $('bOcr').classList.remove('active');
+      if (e.message === 'nolang') stageMsg('err', 'Нет языка для распознавания', 'Добавьте язык в Windows: Параметры → Время и язык → Язык и регион → Добавить язык (например, русский). RPp использует встроенное распознавание текста Windows.');
+      else stageMsg('err', 'Не получилось распознать текст', e.message);
+      setTimeout(() => { if ($('stageMsg').classList.contains('err')) stageMsg(null); }, 6000);
+    } finally { ocrBusy = false; }
+  }
+  function showOcr(lines, src, k) {
+    const o = $('ocr'); o.innerHTML = '';
+    const { r, vw, vh } = src;
+    // canvas px -> video px -> stage px (the same transform the video element has)
+    const toStage = (px, py) => [Z.tx + (r.cx + (src.sx + px / k) / vw * r.cw) * Z.s, Z.ty + (r.cy + (src.sy + py / k) / vh * r.ch) * Z.s];
+    for (const l of lines) {
+      const [x0, y0] = toStage(l.x, l.y), [x1, y1] = toStage(l.x + l.w, l.y + l.h);
+      const b = document.createElement('button');
+      b.style.left = x0 - 3 + 'px'; b.style.top = y0 - 3 + 'px';
+      b.style.width = x1 - x0 + 6 + 'px'; b.style.height = y1 - y0 + 6 + 'px';
+      b.title = l.text + '\n\nНажмите, чтобы скопировать';
+      b.onclick = e => {
+        e.stopPropagation();
+        N.copy(l.text); b.classList.add('copied'); setTimeout(() => b.classList.remove('copied'), 600);
+        toast('Скопировано: ' + (l.text.length > 60 ? l.text.slice(0, 60) + '…' : l.text));
+      };
+      o.appendChild(b);
+    }
+    o._text = lines.map(l => l.text).join('\n');
+    $('ocrInfo').textContent = lines.length ? `Найдено строк: ${lines.length}. Нажмите на надпись, чтобы скопировать` : 'Текст не найден. Попробуйте увеличить нужное место';
+    $('bOcrAll').style.display = lines.length ? '' : 'none';
+    o.classList.add('show'); $('ocrBar').classList.add('show');
+    ocrOn = true;
+  }
+  function closeOcr() {
+    if (!ocrOn) return;
+    ocrOn = false;
+    $('ocr').classList.remove('show'); $('ocrBar').classList.remove('show'); $('ocr').innerHTML = '';
+    $('bOcr').classList.remove('active');
+  }
+  $('bOcr').onclick = readText;
+  $('bOcrX').onclick = closeOcr;
+  $('bOcrAll').onclick = () => { N.copy($('ocr')._text || ''); toast('Весь текст скопирован'); };
+  $('ocr').addEventListener('click', e => { if (e.target === $('ocr')) closeOcr(); });
+  // the boxes belong to this exact frame and view: anything that changes them closes the overlay
+  ['play', 'seeking', 'emptied'].forEach(ev => v.addEventListener(ev, closeOcr));
+  new ResizeObserver(closeOcr).observe(stage);
+
   // ---------- menu, dialogs, fullscreen ----------
   function closeMenu() { $('menu').classList.remove('show'); }
   $('bMore').onclick = e => { e.stopPropagation(); $('menu').classList.toggle('show'); wake(); };
@@ -1008,6 +1286,109 @@
   const showHelp = on => $('help').classList.toggle('show', on);
   $('miKeys').onclick = () => { closeMenu(); showHelp(true); };
   $('bHelpClose').onclick = () => showHelp(false);
+
+  // ---------- deleting videos (to the Recycle Bin) ----------
+  let delPath = null, delBusy = false;
+  function askDelete(p, size) {
+    if (!p) return;
+    closeMenu(); hideCtx(); stopPreview();
+    if (cur && cur.path === p) v.pause();
+    delPath = p;
+    $('delName').textContent = baseName(p);
+    $('delSub').textContent = (size ? fmtSize(size) + '. ' : '') + 'Файл переместится в Корзину Windows, оттуда его можно восстановить.';
+    $('delMsg').textContent = ''; $('delMsg').classList.remove('err');
+    $('bDelGo').disabled = false;
+    $('del').classList.add('show');
+    $('bDelGo').focus();
+  }
+  function closeDelete() { if (!delBusy) { $('del').classList.remove('show'); delPath = null; } }
+  async function doDelete() {
+    const p = delPath;
+    if (!p || delBusy) return;
+    delBusy = true; $('bDelGo').disabled = $('bDelCancel').disabled = true;
+    $('delMsg').classList.remove('err'); $('delMsg').textContent = 'Удаляю…';
+    const playing = cur && cur.path === p;
+    if (playing) {   // let go of the file: the player and its server keep it open while it's loaded
+      showPlayer(false);
+      v.removeAttribute('src'); v.load(); cur = null;
+    }
+    try {
+      await N.trash(p);
+      const pos = store.get('pos', {}); delete pos[p]; store.set('pos', pos);
+      thumbCache.delete(p);
+      if (media) media.files = media.files.filter(f => f.path !== p);
+      delBusy = false; closeDelete();
+      toast('Видео перемещено в корзину');
+      refreshView(true);
+    } catch (e) {
+      $('delMsg').textContent = e.message; $('delMsg').classList.add('err');
+      $('bDelGo').disabled = false;
+      if (playing) loadFile(p);   // couldn't delete: give the video back
+    } finally { delBusy = false; $('bDelCancel').disabled = false; }
+  }
+  $('bDelGo').onclick = doDelete;
+  $('bDelCancel').onclick = closeDelete;
+  $('del').onclick = e => { if (e.target === $('del')) closeDelete(); };
+  $('miDelete').onclick = () => cur && askDelete(cur.path);
+
+  // right-click on a library tile
+  let ctxFile = null;
+  function hideCtx() { $('ctx').classList.remove('show'); ctxFile = null; }
+  function showCtx(e, file) {
+    e.preventDefault();
+    ctxFile = file;
+    const m = $('ctx'); m.classList.add('show');
+    m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + 'px';
+    m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + 'px';
+  }
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('#ctx')) hideCtx(); });
+  $('library').addEventListener('scroll', hideCtx);
+  $('ctxOpen').onclick = () => { const f = ctxFile; hideCtx(); f && loadFile(f.path); };
+  $('ctxFolder').onclick = () => { const f = ctxFile; hideCtx(); f && N.reveal(f.path); };
+  $('ctxDelete').onclick = () => { const f = ctxFile; hideCtx(); f && askDelete(f.path, f.size); };
+
+  // ---------- complaints and suggestions (go to the author's Telegram via his server) ----------
+  const FB = {
+    bug: { title: 'Сообщить о проблеме', sub: 'Что пошло не так? Опишите, что вы делали и что увидели. Если была ошибка, перепишите её текст.', ph: 'Например: при открытии записи .flv пишет «Не удаётся воспроизвести файл»…' },
+    idea: { title: 'Предложить идею', sub: 'Чего не хватает в RPp или что сделать удобнее?', ph: 'Например: хочу горячую клавишу, чтобы…' },
+  };
+  let fbKind = null, fbBusy = false;
+  function showFeedback(kind) {
+    if (fbKind) store.set('fbDraft:' + fbKind, $('fbText').value);   // keep unfinished text
+    fbKind = kind;
+    $('fb').classList.toggle('show', !!kind);
+    if (!kind) return;
+    closeMenu(); v.pause();
+    $('fbTitle').textContent = FB[kind].title; $('fbSub').textContent = FB[kind].sub;
+    $('fbText').placeholder = FB[kind].ph;
+    $('fbText').value = store.get('fbDraft:' + kind, '');
+    $('fbContact').value = store.get('fbContact', '');
+    $('fbMsg').textContent = ''; $('fbMsg').classList.remove('err');
+    $('bFbSend').disabled = false;
+    $('fbText').focus();
+  }
+  async function sendFeedback() {
+    const text = $('fbText').value.trim();
+    if (fbBusy) return;
+    if (text.length < 3) { $('fbMsg').textContent = 'Напишите хотя бы пару слов.'; $('fbMsg').classList.add('err'); return; }
+    fbBusy = true; $('bFbSend').disabled = $('bFbCancel').disabled = true;
+    $('fbMsg').classList.remove('err'); $('fbMsg').textContent = 'Отправляю…';
+    try {
+      await N.feedback({ kind: fbKind, text, contact: $('fbContact').value.trim(), withSystem: $('fbSys').checked });
+      store.set('fbContact', $('fbContact').value.trim());
+      $('fbText').value = ''; store.set('fbDraft:' + fbKind, '');
+      fbKind = null; $('fb').classList.remove('show');
+      toast('Спасибо! Сообщение отправлено автору');
+    } catch (e) {
+      $('fbMsg').textContent = 'Не отправилось: ' + e.message; $('fbMsg').classList.add('err');
+      $('bFbSend').disabled = false;
+    } finally { fbBusy = false; $('bFbCancel').disabled = false; }
+  }
+  $('bBug').onclick = $('miBug').onclick = () => showFeedback('bug');
+  $('bIdea').onclick = $('miIdea').onclick = () => showFeedback('idea');
+  $('bFbCancel').onclick = () => showFeedback(null);
+  $('bFbSend').onclick = sendFeedback;
+  $('fb').onclick = e => { if (e.target === $('fb') && !fbBusy) showFeedback(null); };
   $('help').onclick = e => { if (e.target === $('help')) showHelp(false); };
 
   function toggleFull() {
@@ -1038,12 +1419,18 @@
   document.addEventListener('keydown', wake);
 
   // ---------- drag & drop ----------
+  // Only files dragged in from Explorer count. Dragging inside the app (the video picture, a thumbnail,
+  // selected text — easy to start by accident while seeking) is switched off, so the overlay never pops up for it.
+  const dragOff = () => { document.body.classList.remove('drag'); stage.classList.remove('drag'); };
+  document.addEventListener('dragstart', e => e.preventDefault());
   ['dragenter', 'dragover'].forEach(ev => document.addEventListener(ev, e => {
+    if (!e.dataTransfer || ![...e.dataTransfer.types].includes('Files')) return;
     e.preventDefault(); document.body.classList.add('drag'); stage.classList.add('drag');
   }));
-  document.addEventListener('dragleave', e => { if (!e.relatedTarget) { document.body.classList.remove('drag'); stage.classList.remove('drag'); } });
+  document.addEventListener('dragleave', e => { if (!e.relatedTarget) dragOff(); });
+  document.addEventListener('dragend', dragOff);
   document.addEventListener('drop', e => {
-    e.preventDefault(); document.body.classList.remove('drag'); stage.classList.remove('drag');
+    e.preventDefault(); dragOff();
     const f = [...e.dataTransfer.files].find(f => /\.(mp4|mkv|mov|flv|ts|webm|m4v)$/i.test(f.name));
     const p = f && N.pathForFile(f);
     if (p) { curDir = p.replace(/\\[^\\]+$/, ''); loadFile(p); } else if (e.dataTransfer.files.length) toast('Это не видеофайл', true);
@@ -1078,13 +1465,29 @@
 
   // ---------- keyboard ----------
   document.addEventListener('keydown', e => {
-    if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'radio') return;
     const k = e.key, code = e.code, playing = document.body.classList.contains('play');
     const handled = () => e.preventDefault();
+    if ($('del').classList.contains('show')) {
+      if (k === 'Escape') closeDelete();
+      else if (k === 'Enter') { handled(); doDelete(); }
+      return;
+    }
+    if (k === 'Escape' && $('ctx').classList.contains('show')) { hideCtx(); return; }
+    if ($('fb').classList.contains('show')) {   // typing a message: only Esc and Ctrl+Enter mean something
+      if (k === 'Escape' && !fbBusy) showFeedback(null);
+      else if (e.ctrlKey && k === 'Enter') { handled(); sendFeedback(); }
+      return;
+    }
+    if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'radio') return;
     if (e.ctrlKey && code === 'KeyO') { handled(); openFileDialog(); return; }
     if (k === 'F5') { handled(); refreshButton(); return; }
     if ($('help').classList.contains('show')) { if (k === 'Escape') showHelp(false); return; }
     if ($('upd').classList.contains('show')) { if (k === 'Escape' && !updBusy) showUpdate(false); return; }
+    if (!playing && k === 'Delete') {   // Delete on a focused library tile
+      const t = document.activeElement && document.activeElement.closest && document.activeElement.closest('.tile:not(.folder)');
+      if (t) { handled(); askDelete(t.dataset.path); }
+      return;
+    }
     if (!playing) { if (k === 'Backspace' && view === 'folders' && listing && listing.parent) openDir(listing.parent); return; }
     if (e.ctrlKey && k === 'Enter') { handled(); cut(); return; }
     if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyTime(v.currentTime, 'Время', $('tCur')); return; }
@@ -1113,9 +1516,12 @@
       case 'Equal': case 'NumpadAdd': handled(); zoomCenter(1.25); break;
       case 'Minus': case 'NumpadSubtract': handled(); zoomCenter(0.8); break;
       case 'Backspace': handled(); showPlayer(false); break;
+      case 'Delete': handled(); cur && askDelete(cur.path); break;
+      case 'KeyC': handled(); readText(); break;
       case 'Escape': // menu → trim → fullscreen → library, one layer per press
         handled();
-        if ($('menu').classList.contains('show')) closeMenu();
+        if (ocrOn) closeOcr();
+        else if ($('menu').classList.contains('show')) closeMenu();
         else if (document.fullscreenElement) document.exitFullscreen();
         else if (performance.now() - fullExitAt < 400) {} // this Esc already left fullscreen
         else if ($('trim').classList.contains('show')) showTrim(false);
