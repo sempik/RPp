@@ -128,7 +128,9 @@
   body.play .player { display: block; }
   body.play.idle .player { cursor: none; }
   body.play.idle .player, body.play.idle .titlebar ~ * { }
-  :fullscreen.player { inset: 0; }
+  /* fullscreen is the whole page (not just the player), so dialogs and notices stay visible in it */
+  body.full .player { inset: 0; }
+  body.full .titlebar { display: none; }
   .stage { position: absolute; inset: 0; overflow: hidden; }
   .stage-msg { position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%); z-index: 5; display: none; gap: 14px; align-items: flex-start;
     width: min(520px, calc(100% - 32px)); padding: 18px 20px; }
@@ -322,7 +324,9 @@
   .upd-pop > .ic { color: var(--accent); font-size: 16px; }
   @keyframes pop-in { from { opacity: 0; transform: translateY(8px); } }
   body.play .upd-pop { bottom: 120px; }
-  .toast { position: fixed; left: 50%; top: 48px; transform: translate(-50%, -6px); z-index: 70; padding: 10px 16px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; white-space: nowrap; }
+  .toast { position: fixed; left: 50%; top: 48px; transform: translate(-50%, -6px); z-index: 70; padding: 10px 16px; opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+    width: max-content; max-width: calc(100vw - 48px); text-align: center; overflow-wrap: anywhere; }
+  body.full .toast { top: 16px; }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
   .toast.err { color: var(--danger); }
 </style>
@@ -535,6 +539,7 @@
 (() => {
   const N = window.native;
   let videoBase = '';
+  const baseReady = N.base().then(b => { videoBase = b; });
   const $ = id => document.getElementById(id);
   const v = $('v'), stage = $('stage'), tl = $('tl');
 
@@ -590,6 +595,8 @@
   function showPlayer(on) {
     document.body.classList.toggle('play', on);
     N.chromeMode(on ? 'player' : 'library');
+    hideCtx();
+    if (on) kick();
     if (!on) {
       v.pause(); savePos(); closeMenu(); clearStageMsg();
       if (document.fullscreenElement) document.exitFullscreen();
@@ -612,41 +619,60 @@
     return `${day.getDate()} ${MONTHS[day.getMonth()]}` + (day.getFullYear() !== today.getFullYear() ? ` ${day.getFullYear()}` : '');
   }
 
-  async function openDir(dir, keepScroll) {
+  let listReq = 0;
+  async function openDir(dir, keepScroll, fallback) {
+    const my = ++listReq;
     try {
       const d = await N.list(dir || null);
+      if (my !== listReq) return;          // the user already went somewhere else
       const scroll = $('library').scrollTop;
       curDir = d.dir; store.set('dir', d.dir); listing = d;
       renderCrumbs(d.dir);
       renderLibrary(d);
       if (keepScroll) $('library').scrollTop = scroll;
-    } catch (e) { toast(e.message, true); }
+    } catch (e) {
+      if (my !== listReq) return;
+      if (!fallback) toast(e.message, true);
+      // the folder is gone (deleted, drive unplugged): show its parent, and if that fails too, Videos
+      if (dir) {
+        const up = parentDir(dir), root = /^[A-Za-z]:\\?$/.test(up) || up === '\\';
+        openDir(up !== dir && !root ? up : null, false, true);   // rather Videos than a bare drive root
+      }
+    }
+  }
+  function parentDir(dir) {
+    const p = dir.replace(/[\\/]+$/, '').replace(/[\\/][^\\/]*$/, '');
+    return /^[A-Za-z]:$/.test(p) ? p + '\\' : p;
   }
   function renderCrumbs(dir) {
+    const unc = dir.startsWith('\\\\');   // \\server\share\folder
     const parts = dir.split('\\').filter(Boolean);
     const c = $('crumbs'); c.innerHTML = '';
     parts.forEach((p, i) => {
       if (i) c.insertAdjacentHTML('beforeend', '<span class="ic">&#xE76C;</span>');
       const b = document.createElement('button');
       b.textContent = p;
-      const target = parts.slice(0, i + 1).join('\\') + (i === 0 ? '\\' : '');
-      b.onclick = () => openDir(target);
+      const target = unc ? '\\\\' + parts.slice(0, i + 1).join('\\') + '\\' : parts.slice(0, i + 1).join('\\') + (i === 0 ? '\\' : '');
+      if (unc && i === 0) b.disabled = true;   // a server itself can't be opened as a folder
+      else b.onclick = () => openDir(target);
       c.appendChild(b);
     });
   }
 
+  // keyed by size and date too: a file that was re-saved or finished recording gets a fresh picture and duration
   const thumbCache = new Map();
+  const thumbKey = f => `${f.path}|${f.size}|${f.mtime}`;
   const io = new IntersectionObserver(entries => {
     for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); loadThumb(e.target); }
   }, { root: $('library'), rootMargin: '300px' });
   async function loadThumb(tile) {
-    const p = tile.dataset.path;
-    let t = thumbCache.get(p);
-    if (!t) { t = await N.thumb(p).catch(() => null); if (t) thumbCache.set(p, t); }
-    if (!t) return;
+    const f = tile._file, p = f.path, key = thumbKey(f);
+    let t = thumbCache.get(key);
+    if (!t) { t = await N.thumb(p).catch(() => null); if (t) thumbCache.set(key, t); }
+    if (!t || !tile.isConnected) return;
     if (t.img) {
-      const img = tile.querySelector('img');
-      img.onload = () => { img.classList.add('ready'); tile.querySelector('.ph').remove(); };
+      const img = tile.querySelector('img'), ph = tile.querySelector('.ph');
+      img.onload = () => { img.classList.add('ready'); if (ph) ph.remove(); };
       img.src = t.img;
     }
     if (t.duration) {
@@ -682,7 +708,7 @@
       const folder = withFolder ? baseName(x.path.slice(0, x.path.lastIndexOf('\\'))) + ' · ' : '';
       const b = document.createElement('button');
       b.className = 'tile' + (cur && cur.path === x.path ? ' current' : '');
-      b.dataset.path = x.path; b.title = withFolder ? x.path : x.name;
+      b.dataset.path = x.path; b._file = x; b.title = withFolder ? x.path : x.name;
       b.innerHTML = `<div class="thumb"><img alt=""><span class="ph ic">&#xE714;</span><span class="play ic">&#xE768;</span>` +
         `<span class="dur" style="display:none"></span><span class="watched"></span></div>` +
         `<div class="name">${esc(title)}</div><div class="sub">${esc(folder + fmtSize(x.size))}</div>`;
@@ -701,6 +727,7 @@
   let view = store.get('view', 'folders'), media = null, scanning = false, scanInfo = null;
   function setView(v2) {
     view = v2; store.set('view', view);
+    hideCtx();
     document.body.classList.toggle('all', view === 'all');
     for (const b of $('pivot').children) b.classList.toggle('on', b.dataset.view === view);
     $('library').scrollTop = 0;
@@ -714,17 +741,18 @@
   }
   function renderScanline() {
     const n = media ? media.files.length : 0;
-    $('scanline').innerHTML = scanning
+    // no list yet = the first search after installing hasn't finished (it starts by itself a moment after launch)
+    $('scanline').innerHTML = scanning || !media
       ? `<span class="spin"></span>Ищу видео на дисках…` + (scanInfo ? ` просмотрено папок: ${scanInfo.dirs.toLocaleString('ru')}, найдено: ${scanInfo.found.toLocaleString('ru')}` : '')
-      : media ? `Найдено видео: ${n.toLocaleString('ru')}. Системные папки и папки игр пропущены.` : '';
+      : `Найдено видео: ${n.toLocaleString('ru')}. Системные папки и папки игр пропущены.`;
   }
   function renderAll() {
-    stopPreview();
+    stopPreview(); io.disconnect();
     renderScanline();
     $('groups').innerHTML = '';
     if (media && media.files.length) return renderFiles(media.files, true);
     pending = [];
-    if (!scanning) $('groups').innerHTML = `<div class="empty"><span class="ic">&#xE714;</span><b>Видео не найдено</b>
+    if (media && !scanning) $('groups').innerHTML = `<div class="empty"><span class="ic">&#xE714;</span><b>Видео не найдено</b>
       На локальных дисках нет видеофайлов больше 1 МБ.</div>`;
   }
   for (const b of $('pivot').children) b.onclick = () => view !== b.dataset.view && setView(b.dataset.view);
@@ -740,7 +768,7 @@
   }
   function startPreview(tile) {
     if (!tile.isConnected || document.body.classList.contains('play')) return;
-    const p = tile.dataset.path, t = thumbCache.get(p), d = t && t.duration;
+    const p = tile.dataset.path, t = thumbCache.get(thumbKey(tile._file)), d = t && t.duration;
     const pv = document.createElement('video');
     pv.className = 'preview'; pv.muted = true; pv.loop = true; pv.playsInline = true; pv.preload = 'auto';
     // start where the user left off, otherwise a little into the recording (the first seconds are often a menu)
@@ -766,6 +794,7 @@
 
   function renderLibrary(d) {
     stopPreview();
+    io.disconnect();   // the old tiles are thrown away: stop watching them, or they'd never be freed
     $('groups').innerHTML = '';
     if (d.dirs.length) {
       const tiles = group('Папки');
@@ -788,27 +817,32 @@
   // ---------- loading ----------
   function loadFile(path) {
     if (!path) return;
+    if (!videoBase) { baseReady.then(() => loadFile(path)); return; }   // opened before the video server answered
     savePos();
-    stopPreview();
+    stopPreview(); hideCtx();
     cur = { path, name: baseName(path) };
     clearStageMsg();
     v.src = videoBase + encodeURIComponent(path);
     $('docTitle').textContent = cur.name;
     document.title = cur.name + ' — RPp';
     setIn(null); setOut(null); setLoop(false); showTrim(false); $('job').classList.remove('show');
-    resetZoom(); fpsDelta = Infinity;
+    resetZoom(); fpsDelta = Infinity; lastMT = null;
     updateCutState();
     showPlayer(true);
     v.play().catch(() => {});
   }
+  let resumeAt = null;   // set when skipping a damaged spot
   v.addEventListener('loadedmetadata', () => {
     $('tDur').textContent = fmt(dur(), false);
     const p = cur && store.get('pos', {})[cur.path];
-    if (p && p > 5 && p < dur() - 5) { v.currentTime = p; toast('Продолжаем с ' + fmt(p, false)); }
+    if (resumeAt !== null) { v.currentTime = resumeAt; resumeAt = null; }
+    else if (p && p > 5 && p < dur() - 5) { v.currentTime = p; toast('Продолжаем с ' + fmt(p, false)); }
     applyZoom();
   });
   // ---------- files the player can't open ----------
-  let waitTimer = null, convTimer = null;
+  // convRun changes whenever the user cancels, leaves or opens another file: a conversion that started before
+  // that must not take over the player when it finishes.
+  let waitTimer = null, convTimer = null, convRun = 0, convFile = null;
   function stageMsg(kind, title, text, acts = []) {
     const m = $('stageMsg');
     m.className = 'stage-msg acrylic' + (kind ? ' show ' + kind : '');
@@ -824,7 +858,9 @@
   }
   function clearStageMsg() {
     clearTimeout(waitTimer); waitTimer = null;
-    if (convTimer) { clearInterval(convTimer); convTimer = null; N.playableCancel(); }
+    convRun++;
+    if (convTimer) { clearInterval(convTimer); convTimer = null; }
+    if (convFile) { N.playableCancel(convFile); convFile = null; }
     stageMsg(null);
   }
   v.addEventListener('loadedmetadata', () => {
@@ -835,8 +871,9 @@
 
   // Copy the file into something the player can read, show progress, then play the copy.
   function makePlayable(mode) {
-    const file = cur.path;
+    const file = cur.path, run = ++convRun;
     cur.mode = mode;
+    convFile = file;
     const title = mode === 'remux' ? 'Подготавливаю файл' : 'Перекодирую для просмотра';
     const text = mode === 'remux'
       ? 'Этот формат RPp не читает напрямую. Перепаковываю видео в MP4 без потери качества, это займёт несколько секунд. Исходный файл не меняется.'
@@ -844,17 +881,19 @@
     stageMsg('busy', title + '…', text, [['Отмена', () => { clearStageMsg(); stageMsg('err', 'Отменено', 'Файл не открыт.'); }]]);
     $('stageBar').classList.add('show'); $('stageBar').firstChild.style.width = '0%';
     N.playable(file, mode).then(() => {
-      convTimer = setInterval(async () => {
+      if (run !== convRun) return;   // cancelled or left while it was starting (clearStageMsg already stopped it)
+      const timer = convTimer = setInterval(async () => {
         const s = await N.playableStatus().catch(() => null);
+        if (run !== convRun) { clearInterval(timer); return; }
         if (!s || !cur || cur.path !== file || s.src !== file) return;
         $('stageBar').firstChild.style.width = s.percent + '%';
         $('stageTitle').textContent = `${title}… ${s.percent}%`;
         if (s.state === 'running') return;
-        clearInterval(convTimer); convTimer = null;
+        clearInterval(timer); convTimer = null; convFile = null;
         if (s.state === 'done') { stageMsg(null); v.src = videoBase + encodeURIComponent(s.out); v.play().catch(() => {}); }
         else if (s.state === 'error') mode === 'remux' ? offerEncode() : stageMsg('err', 'Не удалось перекодировать', s.error || '');
       }, 400);
-    }, e => stageMsg('err', 'Не удалось подготовить файл', e.message));
+    }, e => { if (run === convRun) { convFile = null; stageMsg('err', 'Не удалось подготовить файл', e.message); } });
   }
   function offerEncode() {
     v.pause();
@@ -864,7 +903,18 @@
 
   v.addEventListener('error', async () => {
     if (!v.getAttribute('src') || !cur) return;
-    const file = cur.path, reason = v.error && v.error.message || '';
+    const file = cur.path, reason = v.error && v.error.message || '', at = v.currentTime;
+    // it was playing fine and broke on the way: a damaged spot in the recording, not an unsupported codec
+    if (/DECODE/.test(reason) && at > 1 && dur()) {
+      return stageMsg('err', 'Повреждённый участок записи', `Видео не читается около ${fmt(at, false)}. Можно пропустить это место или сделать копию для просмотра.`, [
+        ['Продолжить дальше', () => {   // reload what was playing (the file or its viewing copy) past the bad spot
+          const src = v.src.replace(/&retry=\d+$/, '');
+          stageMsg(null); resumeAt = Math.min(at + 2, dur());
+          v.src = src + '&retry=' + Date.now(); v.play().catch(() => {});
+        }, true],
+        ['Перекодировать для просмотра', () => makePlayable('encode')],
+      ]);
+    }
     if (cur.mode === 'remux') return offerEncode();      // even the MP4 copy fails: it's the codec
     if (cur.mode === 'encode') return stageMsg('err', 'Не удаётся воспроизвести файл', reason);
     if (!waitTimer) stageMsg('wait', 'Проверяю файл…', ''); // keep "recording" on screen between retries
@@ -889,8 +939,9 @@
   function savePos() {
     if (!cur || !dur()) return;
     const all = store.get('pos', {});
-    all[cur.path] = v.currentTime;
-    const keys = Object.keys(all); if (keys.length > 300) delete all[keys[0]];
+    delete all[cur.path]; all[cur.path] = v.currentTime;   // move to the end: the least recently watched are forgotten first
+    const keys = Object.keys(all);
+    for (let i = 0; i < keys.length - 300; i++) delete all[keys[i]];
     store.set('pos', all);
   }
   setInterval(() => { if (!v.paused) savePos(); }, 5000);
@@ -926,6 +977,7 @@
     };
     v.requestVideoFrameCallback(onFrame);
   }
+  v.addEventListener('seeking', () => { lastMT = null; });   // a jump is not the distance between two frames
   const frameDur = () => isFinite(fpsDelta) ? fpsDelta : 1 / 60;
   function stepFrame(n) { v.pause(); seek(v.currentTime + n * frameDur()); }
 
@@ -979,7 +1031,7 @@
   function tlTime(e) { const r = tl.getBoundingClientRect(); return clamp((e.clientX - r.left) / r.width, 0, 1) * dur(); }
   let tlDrag = null;
   tl.addEventListener('pointerdown', e => {
-    if (!dur()) return;
+    if (e.button !== 0 || !dur()) return;
     tlDrag = e.target === $('hIn') ? 'in' : e.target === $('hOut') ? 'out' : 'seek';
     tl.setPointerCapture(e.pointerId); tl.classList.add('active');
     onTlMove(e);
@@ -1116,7 +1168,7 @@
     Z.ty = fit(Z.ty, r.H, r.cy, r.ch);
   }
   function applyZoom() {
-    if (typeof closeOcr === 'function') closeOcr();   // boxes would no longer match the picture
+    ocrStale();   // boxes would no longer match the picture
     clampPan();
     v.style.transform = `translate(${Z.tx}px, ${Z.ty}px) scale(${Z.s})`;
     $('zoomVal').textContent = Math.round(Z.s * 100) + '%';
@@ -1201,7 +1253,9 @@
 
   // ---------- text from the frame ----------
   // Only the visible part of the frame is read: zooming in on small text makes it far more accurate.
-  var ocrBusy = false, ocrOn = false;   // var: applyZoom() may run before this line
+  var ocrBusy = false, ocrOn = false, ocrEpoch = 0;   // var: applyZoom() may run before this line
+  // the picture changed (played, sought, zoomed, resized, another file): boxes and pending results are void
+  function ocrStale() { ocrEpoch = (ocrEpoch || 0) + 1; closeOcr(); }
   function visibleSource() {
     const r = contentRect(), vw = v.videoWidth, vh = v.videoHeight;
     const toU = (x, t, c, cs) => ((x - t) / Z.s - c) / cs;
@@ -1214,24 +1268,34 @@
     if (ocrOn) return closeOcr();
     v.pause(); closeMenu();
     ocrBusy = true;
-    $('bOcr').classList.add('active');
-    stageMsg('busy', 'Ищу текст на кадре…', '');
+    $('bOcr').classList.add('on');
+    const BUSY = 'Ищу текст на кадре…';
+    stageMsg('busy', BUSY, '');
+    // the boxes only make sense on this very frame, file and view
+    const shot = { path: cur.path, epoch: ocrEpoch };
+    const stillSame = () => cur && cur.path === shot.path && ocrEpoch === shot.epoch && document.body.classList.contains('play');
+    const dropBusy = () => { if ($('stageTitle').textContent === BUSY) stageMsg(null); };
     try {
       const src = visibleSource();
-      // small text reads better a bit enlarged; Windows OCR accepts up to 10000 px
-      const k = clamp(1920 / src.sw, 1, 3);
+      if (src.sw < 2 || src.sh < 2) throw new Error('Нет кадра');
+      // small text reads better a bit enlarged; Windows OCR takes at most 10000 px a side
+      const k = Math.min(clamp(1920 / src.sw, 1, 3), 9999 / src.sw, 9999 / src.sh);
       const c = document.createElement('canvas');
       c.width = Math.round(src.sw * k); c.height = Math.round(src.sh * k);
       const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
       g.drawImage(v, src.sx, src.sy, src.sw, src.sh, 0, 0, c.width, c.height);
       const res = await N.ocr(c.toDataURL('image/png'));
-      stageMsg(null);
+      dropBusy();
+      if (!stillSame()) { $('bOcr').classList.remove('on'); return; }   // played, sought, zoomed or left meanwhile
       showOcr(res.lines, src, k);
     } catch (e) {
-      $('bOcr').classList.remove('active');
+      $('bOcr').classList.remove('on');
+      dropBusy();
+      if (!stillSame()) return;
       if (e.message === 'nolang') stageMsg('err', 'Нет языка для распознавания', 'Добавьте язык в Windows: Параметры → Время и язык → Язык и регион → Добавить язык (например, русский). RPp использует встроенное распознавание текста Windows.');
       else stageMsg('err', 'Не получилось распознать текст', e.message);
-      setTimeout(() => { if ($('stageMsg').classList.contains('err')) stageMsg(null); }, 6000);
+      const shown = $('stageTitle').textContent;
+      setTimeout(() => { if ($('stageMsg').classList.contains('err') && $('stageTitle').textContent === shown) stageMsg(null); }, 6000);
     } finally { ocrBusy = false; }
   }
   function showOcr(lines, src, k) {
@@ -1262,15 +1326,15 @@
     if (!ocrOn) return;
     ocrOn = false;
     $('ocr').classList.remove('show'); $('ocrBar').classList.remove('show'); $('ocr').innerHTML = '';
-    $('bOcr').classList.remove('active');
+    $('bOcr').classList.remove('on');
   }
   $('bOcr').onclick = readText;
   $('bOcrX').onclick = closeOcr;
   $('bOcrAll').onclick = () => { N.copy($('ocr')._text || ''); toast('Весь текст скопирован'); };
   $('ocr').addEventListener('click', e => { if (e.target === $('ocr')) closeOcr(); });
   // the boxes belong to this exact frame and view: anything that changes them closes the overlay
-  ['play', 'seeking', 'emptied'].forEach(ev => v.addEventListener(ev, closeOcr));
-  new ResizeObserver(closeOcr).observe(stage);
+  ['play', 'seeking', 'emptied'].forEach(ev => v.addEventListener(ev, ocrStale));
+  new ResizeObserver(ocrStale).observe(stage);
 
   // ---------- menu, dialogs, fullscreen ----------
   function closeMenu() { $('menu').classList.remove('show'); }
@@ -1315,7 +1379,7 @@
     try {
       await N.trash(p);
       const pos = store.get('pos', {}); delete pos[p]; store.set('pos', pos);
-      thumbCache.delete(p);
+      for (const k of [...thumbCache.keys()]) if (k.startsWith(p + '|')) thumbCache.delete(k);
       if (media) media.files = media.files.filter(f => f.path !== p);
       delBusy = false; closeDelete();
       toast('Видео перемещено в корзину');
@@ -1391,9 +1455,12 @@
   $('fb').onclick = e => { if (e.target === $('fb') && !fbBusy) showFeedback(null); };
   $('help').onclick = e => { if (e.target === $('help')) showHelp(false); };
 
+  // The whole page goes fullscreen, not just the player: confirmations (delete!), help and notices
+  // live outside the player and would otherwise be invisible while still taking keys.
   function toggleFull() {
-    document.fullscreenElement ? document.exitFullscreen() : $('player').requestFullscreen().catch(() => {});
+    document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => {});
   }
+  document.addEventListener('fullscreenchange', () => document.body.classList.toggle('full', !!document.fullscreenElement));
   let fullExitAt = -1e9;
   document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) fullExitAt = performance.now(); $('bFull').textContent = document.fullscreenElement ? '' : ''; });
   $('bFull').onclick = toggleFull;
@@ -1451,16 +1518,23 @@
     $('hIn').classList.toggle('show', sel); $('hOut').classList.toggle('show', sel);
     if (sel) { $('hIn').style.left = pct(inT); $('hOut').style.left = pct(outT); }
   }
-  let lastCur = '';
+  // Runs every display frame only while something moves (playback, dragging, seeking); otherwise it sleeps
+  // and the video's own events wake it, so an idle or paused RPp costs no CPU.
+  let lastCur = '', rafOn = false;
   function frame() {
+    rafOn = false;
     if (loop && inT !== null && outT !== null && outT > inT && !v.paused && v.currentTime >= outT) v.currentTime = inT;
     const c = fmt(v.currentTime, false);
     if (c !== lastCur) { $('tCur').textContent = c; lastCur = c; }
-    if (document.body.classList.contains('play')) drawTimeline();
+    const inPlayer = document.body.classList.contains('play');
+    if (inPlayer) drawTimeline();
     if (!v.paused) drawNav(false);
-    requestAnimationFrame(frame);
+    if (inPlayer && (!v.paused || tlDrag || v.seeking)) kick();
   }
-  requestAnimationFrame(frame);
+  function kick() { if (!rafOn) { rafOn = true; requestAnimationFrame(frame); } }
+  ['play', 'pause', 'seeking', 'seeked', 'timeupdate', 'progress', 'loadedmetadata', 'durationchange', 'emptied', 'ended']
+    .forEach(ev => v.addEventListener(ev, kick));
+  kick();
   v.addEventListener('seeked', () => drawNav(true));
 
   // ---------- keyboard ----------
@@ -1485,7 +1559,7 @@
     if ($('upd').classList.contains('show')) { if (k === 'Escape' && !updBusy) showUpdate(false); return; }
     if (!playing && k === 'Delete') {   // Delete on a focused library tile
       const t = document.activeElement && document.activeElement.closest && document.activeElement.closest('.tile:not(.folder)');
-      if (t) { handled(); askDelete(t.dataset.path); }
+      if (t) { handled(); askDelete(t.dataset.path, t._file && t._file.size); }
       return;
     }
     if (!playing) { if (k === 'Backspace' && view === 'folders' && listing && listing.parent) openDir(listing.parent); return; }
@@ -1588,7 +1662,7 @@
   };
 
   (async () => {
-    videoBase = await N.base();
+    await baseReady;
     N.info().then(i => {
       hasFfmpeg = !!i.ffmpeg; $('ver').textContent = 'RPp ' + i.version;
       if (i.accent) applyAccent(i.accent);

@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('native', {
   probe: p => call('probe', p),
   playable: (p, mode) => call('playable', p, mode),
   playableStatus: () => call('playable-status'),
-  playableCancel: () => call('playable-cancel'),
+  playableCancel: p => call('playable-cancel', p),
   media: () => call('media'),
   rescan: () => call('rescan'),
   onMedia: cb => ipcRenderer.on('media', (_, m) => cb(m)),

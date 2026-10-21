@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, clipboard, systemPreferences, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, Menu, clipboard, systemPreferences, Notification, screen } = require('electron');
 const os = require('os');
 const path = require('path');
 const fs = require('fs');
@@ -8,6 +8,28 @@ const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
 const { spawn } = require('child_process');
+
+// Every helper process (ffmpeg, PowerShell) goes through run(): Windows doesn't end child processes
+// together with their parent, so they are killed explicitly when RPp quits. Output is decoded as UTF-8
+// as a stream, so a Cyrillic character split between two chunks stays intact.
+const kids = new Set();
+function run(cmd, args, opts) {
+  const p = spawn(cmd, args, { windowsHide: true, ...opts });
+  kids.add(p);
+  const done = () => kids.delete(p);
+  p.on('close', done); p.on('error', done);
+  if (p.stdout) p.stdout.setEncoding('utf8');
+  if (p.stderr) p.stderr.setEncoding('utf8');
+  if (p.stdin) p.stdin.on('error', () => {});   // the process may exit before reading its input
+  return p;
+}
+const sleepSync = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+// Delete a file a process has just been killed for; Windows releases it a moment later.
+function rmSoonSync(f) {
+  for (let i = 0; i < 15; i++) {
+    try { fs.rmSync(f, { force: true }); return; } catch { sleepSync(100); }
+  }
+}
 
 const VIDEO_EXT = new Set(['.mp4', '.mkv', '.mov', '.flv', '.ts', '.webm', '.m4v']);
 // Chromium plays Matroska through its WebM demuxer, so mkv is served as webm.
@@ -138,8 +160,8 @@ function init() {
       encoderPromise = (async () => {
         for (const enc of ENCODERS.slice(0, -1)) {
           const ok = await new Promise(resolve => {
-            const p = spawn(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=0.2',
-              '-frames:v', '3', ...enc.args, '-f', 'null', '-'], { windowsHide: true });
+            const p = run(ffmpegPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=1280x720:d=0.2',
+              '-frames:v', '3', ...enc.args, '-f', 'null', '-']);
             p.on('error', () => resolve(false));
             p.on('close', code => resolve(code === 0));
           });
@@ -153,13 +175,13 @@ function init() {
 
   // ---------- local video server (Range requests -> seeking in huge files) ----------
   const token = crypto.randomBytes(16).toString('hex');
-  let videoBase = '';
+  let videoBase = '', thumbBase = '';
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://localhost');
+    if (u.searchParams.get('t') !== token) { res.writeHead(403); res.end(); return; }
+    if (u.pathname === '/thumb') return serveThumb(u.searchParams.get('k'), res);
     const file = u.searchParams.get('path');
-    if (u.pathname !== '/video' || u.searchParams.get('t') !== token || !isVideo(file)) {
-      res.writeHead(403); res.end(); return;
-    }
+    if (u.pathname !== '/video' || !isVideo(file)) { res.writeHead(403); res.end(); return; }
     let st;
     try { st = await fsp.stat(file); } catch { st = null; }
     if (!st || !st.isFile()) { res.writeHead(404); res.end(); return; }
@@ -170,7 +192,7 @@ function init() {
       if (m[1]) { start = +m[1]; if (m[2]) end = Math.min(+m[2], size - 1); }
       else if (m[2]) start = Math.max(0, size - m[2]);
     }
-    if (start >= size) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); res.end(); return; }
+    if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); res.end(); return; }
     const headers = {
       'Content-Type': MIME[path.extname(file).toLowerCase()],
       'Accept-Ranges': 'bytes',
@@ -186,8 +208,20 @@ function init() {
     res.on('close', () => stream.destroy());
     stream.pipe(res);
   });
+  // Library thumbnails are plain JPEG files served by URL: no base64 strings through IPC and in the page's memory.
+  function serveThumb(k, res) {
+    if (!/^[0-9a-f]{40}$/.test(k || '')) { res.writeHead(404); res.end(); return; }
+    fs.readFile(path.join(thumbDir, k + '.jpg'), (e, buf) => {
+      if (e) { res.writeHead(404); res.end(); return; }
+      // the key changes whenever the video file changes, so the picture behind a URL never does
+      res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Content-Length': buf.length, 'Cache-Control': 'max-age=31536000, immutable' });
+      res.end(buf);
+    });
+  }
   const serverReady = new Promise(resolve => server.listen(0, '127.0.0.1', () => {
-    videoBase = `http://127.0.0.1:${server.address().port}/video?t=${token}&path=`;
+    const base = `http://127.0.0.1:${server.address().port}`;
+    videoBase = `${base}/video?t=${token}&path=`;
+    thumbBase = `${base}/thumb?t=${token}&k=`;
     resolve();
   }));
 
@@ -219,7 +253,7 @@ function init() {
     if (/\.(mp4|mov|m4v)$/i.test(out)) args.push('-movflags', '+faststart');
     args.push('-progress', 'pipe:1', out);
 
-    const proc = spawn(ffmpegPath, args, { windowsHide: true });
+    const proc = run(ffmpegPath, args);
     const j = job = { proc, out, duration, state: 'running', percent: 0, log: '', cancelled: false, encoder: enc && enc.name };
     proc.stdout.on('data', d => {
       const all = [...String(d).matchAll(/out_time_us=(\d+)/g)];
@@ -251,18 +285,37 @@ function init() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => fs.writeFile(indexFile, JSON.stringify(thumbIndex), () => {}), 1000);
   };
-  const dataUrl = f => 'data:image/jpeg;base64,' + fs.readFileSync(f).toString('base64');
   const thumbQueue = [];
+  const thumbPending = new Map();   // key -> promise: one ffmpeg per picture even if the library asks twice
   let thumbActive = 0;
 
   async function getThumb(p) {
+    await serverReady;
     let st;
     try { st = await fsp.stat(p); } catch { return null; }
     const key = crypto.createHash('sha1').update(`${p}|${st.size}|${st.mtimeMs}`).digest('hex');
     const hit = loadIndex()[key];
     const file = path.join(thumbDir, key + '.jpg');
-    if (hit && fs.existsSync(file)) return { duration: hit.duration, img: dataUrl(file) };
-    return new Promise(resolve => { thumbQueue.push({ p, key, file, resolve }); pumpThumbs(); });
+    if (hit && fs.existsSync(file)) {
+      if (!hit.used || Date.now() - hit.used > 864e5) { hit.used = Date.now(); hit.p = p; saveIndex(); }
+      return { duration: hit.duration, img: thumbBase + key };
+    }
+    if (!thumbPending.has(key)) {
+      const pr = new Promise(resolve => { thumbQueue.push({ p, key, file, resolve }); pumpThumbs(); });
+      thumbPending.set(key, pr);
+      pr.finally(() => thumbPending.delete(key));
+    }
+    return thumbPending.get(key);
+  }
+  // Pictures of videos nobody has looked at for 3 months (deleted, renamed, re-saved) are removed.
+  function pruneThumbs() {
+    const idx = loadIndex(), now = Date.now();
+    let changed = false;
+    for (const [key, e] of Object.entries(idx)) {
+      if (!e.used) { e.used = now; changed = true; continue; }   // entries from older versions: start counting now
+      if (now - e.used > 90 * 864e5) { delete idx[key]; fs.rm(path.join(thumbDir, key + '.jpg'), { force: true }, () => {}); changed = true; }
+    }
+    if (changed) saveIndex();
   }
   function pumpThumbs() {
     while (thumbActive < 2 && thumbQueue.length) {
@@ -273,22 +326,22 @@ function init() {
   }
   async function extractThumb({ p, key, file, resolve }) {
     await fsp.mkdir(thumbDir, { recursive: true });
-    const run = ss => new Promise(res => {
+    const grab = ss => new Promise(res => {
       fs.rmSync(file, { force: true });
-      const pr = spawn(ffmpegPath, ['-hide_banner', '-ss', String(ss), '-i', p, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', '-y', file], { windowsHide: true });
+      const pr = run(ffmpegPath, ['-hide_banner', '-ss', String(ss), '-i', p, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', '-y', file]);
       let err = '';
       pr.stderr.on('data', d => { err += d; });
       pr.on('error', () => res(err));
       pr.on('close', () => res(err));
     });
-    let log = await run(8);
-    if (!fs.existsSync(file) || !fs.statSync(file).size) log = await run(0);
+    let log = await grab(8);
+    if (!fs.existsSync(file) || !fs.statSync(file).size) log = await grab(0);
     const m = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(log);
     const duration = m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null;
     const ok = fs.existsSync(file) && fs.statSync(file).size > 0;
     // failures are not cached: the file may still be recording
-    if (ok) { loadIndex()[key] = { duration }; saveIndex(); }
-    resolve({ duration, img: ok ? dataUrl(file) : null });
+    if (ok) { loadIndex()[key] = { duration, p, used: Date.now() }; saveIndex(); }
+    resolve({ duration, img: ok ? thumbBase + key : null });
   }
 
   function accentColor() {
@@ -297,6 +350,16 @@ function init() {
   }
 
   // ---------- file browser ----------
+  // .ts is also TypeScript source code: an MPEG-TS video starts with the 0x47 sync byte, repeated every 188 bytes.
+  async function realVideo(full, name) {
+    if (path.extname(name).toLowerCase() !== '.ts') return true;
+    let fh;
+    try {
+      fh = await fsp.open(full, 'r');
+      const b = Buffer.alloc(189), { bytesRead } = await fh.read(b, 0, 189, 0);
+      return bytesRead > 0 && b[0] === 0x47 && (bytesRead < 189 || b[188] === 0x47);
+    } catch { return false; } finally { if (fh) await fh.close().catch(() => {}); }
+  }
   async function listDir(dir) {
     if (!dir) dir = app.getPath('videos');
     try { if ((await fsp.stat(dir)).isFile()) dir = path.dirname(dir); }
@@ -308,7 +371,7 @@ function init() {
       if (e.name.startsWith('.') || e.name.startsWith('$')) continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) dirs.push({ name: e.name, path: full });
-      else if (e.isFile() && isVideo(e.name)) {
+      else if (e.isFile() && isVideo(e.name) && await realVideo(full, e.name)) {
         try {
           const st = await fsp.stat(full);
           files.push({ name: e.name, path: full, size: st.size, mtime: st.mtimeMs });
@@ -335,12 +398,13 @@ function init() {
 
   function localDrives() {
     return new Promise(resolve => {
-      const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-        '(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3").DeviceID'], { windowsHide: true });
+      const p = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+        '(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3").DeviceID']);
       let out = '';
+      const t = setTimeout(() => p.kill(), 15000);   // a stuck WMI must not stop the scan
       p.stdout.on('data', d => { out += d; });
-      p.on('error', () => resolve(['C:']));
-      p.on('close', () => { const l = out.match(/[A-Z]:/g); resolve(l && l.length ? l : ['C:']); });
+      p.on('error', () => { clearTimeout(t); resolve(['C:']); });
+      p.on('close', () => { clearTimeout(t); const l = out.match(/[A-Z]:/g); resolve(l && l.length ? l : ['C:']); });
     });
   }
   async function scanMedia() {
@@ -358,7 +422,10 @@ function init() {
         if (e.isDirectory()) {   // junctions/symlinks report as links, not directories: no loops
           if (n[0] !== '$' && n[0] !== '.' && !SKIP_DIRS.has(n.toLowerCase())) queue.push(full);
         } else if (e.isFile() && isVideo(n) && found.length < MAX_VIDEOS) {
-          try { const st = await fsp.stat(full); if (st.size >= MIN_VIDEO) found.push({ name: n, path: full, size: st.size, mtime: st.mtimeMs }); } catch { }
+          try {
+            const st = await fsp.stat(full);
+            if (st.size >= MIN_VIDEO && await realVideo(full, n)) found.push({ name: n, path: full, size: st.size, mtime: st.mtimeMs });
+          } catch { }
         }
       }
       if (Date.now() - lastSent > 500) { lastSent = Date.now(); sendProgress(); }
@@ -441,6 +508,18 @@ function init() {
       sendDl();
     }
   }
+  // The installer of the previous update stays in %TEMP% (130 MB); remove it once it has done its job.
+  function cleanUpdates() {
+    if (dl && dl.state !== 'error') return;
+    const dir = path.join(os.tmpdir(), 'RPp-update');
+    fs.readdir(dir, (e, names) => {
+      if (e) return;
+      for (const n of names) {
+        const f = path.join(dir, n);
+        fs.stat(f, (e2, st) => { if (!e2 && Date.now() - st.mtimeMs > 10 * 60e3) fs.rm(f, { force: true }, () => {}); });
+      }
+    });
+  }
 
   // ---------- IPC ----------
   ipcMain.handle('base', async () => { await serverReady; return videoBase; });
@@ -468,7 +547,7 @@ function init() {
     await new Promise(r => setTimeout(r, 1500));
     if ((await size()) !== a) return { growing: true };
     const error = await new Promise(resolve => {
-      const pr = spawn(ffmpegPath, ['-hide_banner', '-v', 'error', '-i', p, '-t', '0.5', '-f', 'null', '-'], { windowsHide: true });
+      const pr = run(ffmpegPath, ['-hide_banner', '-v', 'error', '-i', p, '-t', '0.5', '-f', 'null', '-']);
       let err = '';
       pr.stderr.on('data', d => { err += d; });
       pr.on('error', () => resolve(null));
@@ -487,13 +566,17 @@ function init() {
     const st = await fsp.stat(src);
     const key = crypto.createHash('sha1').update(`${src}|${st.size}|${st.mtimeMs}|${mode}`).digest('hex');
     const out = path.join(playDir, key + '.mp4');
-    if (fs.existsSync(out)) { conv = { src, mode, state: 'done', percent: 100, out }; return; }
+    if (fs.existsSync(out)) {
+      const now = new Date(); fs.utimes(out, now, now, () => {});   // in use again: the weekly cleanup keeps it
+      conv = { src, mode, state: 'done', percent: 100, out };
+      return;
+    }
     await fsp.mkdir(playDir, { recursive: true });
     const tmp = out + '.part';
     const enc = mode === 'encode' ? await pickEncoder() : null;
     const args = ['-hide_banner', '-nostats', '-y', '-i', src, '-map', '0:v:0', '-map', '0:a?',
       ...(enc ? enc.args : ['-c:v', 'copy']), '-c:a', 'aac', '-b:a', '192k', '-f', 'mp4', '-progress', 'pipe:1', tmp];
-    const proc = spawn(ffmpegPath, args, { windowsHide: true });
+    const proc = run(ffmpegPath, args);
     const c = conv = { src, mode, proc, state: 'running', percent: 0, out, duration: 0, log: '' };
     proc.stderr.on('data', d => {
       c.log = (c.log + d).slice(-4000);
@@ -517,13 +600,20 @@ function init() {
       const files = names.map(n => { const f = path.join(playDir, n); try { const s = fs.statSync(f); return { f, t: s.mtimeMs, size: s.size }; } catch { return null; } })
         .filter(Boolean).sort((a, b) => b.t - a.t);
       let total = 0;
-      for (const x of files) { total += x.size; if (Date.now() - x.t > 7 * 864e5 || total > 20 * 2 ** 30 || x.f.endsWith('.part')) fs.rm(x.f, { force: true }, () => {}); }
+      for (const x of files) {
+        total += x.size;
+        if (conv && (x.f === conv.out || x.f === conv.out + '.part')) continue;   // being made or watched right now
+        if (Date.now() - x.t > 7 * 864e5 || total > 20 * 2 ** 30 || x.f.endsWith('.part')) fs.rm(x.f, { force: true }, () => {});
+      }
     });
   }
   ipcMain.handle('playable', (_, src, mode) => (isVideo(src) ? startPlayable(src, mode === 'encode' ? 'encode' : 'remux') : null));
   ipcMain.handle('playable-status', () => conv && { src: conv.src, mode: conv.mode, state: conv.state, percent: Math.round(conv.percent), out: conv.out,
     error: conv.state === 'error' ? conv.log.trim().split(/\r?\n/).slice(-2).join(' ') : null });
-  ipcMain.handle('playable-cancel', () => { if (conv && conv.state === 'running') { conv.state = 'cancelled'; conv.proc.kill(); } });
+  // only the copy of this file: a late "cancel" from a file the user already left must not stop the next one
+  ipcMain.handle('playable-cancel', (_, src) => {
+    if (conv && conv.state === 'running' && (!src || conv.src === src)) { conv.state = 'cancelled'; conv.proc.kill(); }
+  });
 
   // ---------- text from the frame (Windows' built-in OCR, the one the Snipping Tool uses) ----------
   // Nothing runs until the button is pressed; then one short PowerShell call reads a PNG of the visible frame.
@@ -537,8 +627,8 @@ function init() {
     await fsp.writeFile(img, Buffer.from(m[1], 'base64'));
     try {
       const out = await new Promise((resolve, reject) => {
-        const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', OCR_RUN],
-          { windowsHide: true, env: { ...process.env, RPP_OCR_IMAGE: img } });
+        const p = run('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', OCR_RUN],
+          { env: { ...process.env, RPP_OCR_IMAGE: img } });
         let so = '', se = '';
         p.stdout.on('data', d => { so += d; });
         p.stderr.on('data', d => { se += d; });
@@ -561,9 +651,15 @@ function init() {
   // for a moment (our video server, a thumbnail being made), so retry briefly.
   ipcMain.handle('trash', async (_, p) => {
     if (!isVideo(p) || !fs.existsSync(p)) throw new Error('Файл не найден');
+    // a copy for viewing may still be reading this file
+    if (conv && conv.state === 'running' && conv.src === p) { conv.state = 'cancelled'; conv.proc.kill(); }
     for (let i = 0; ; i++) {
       try { await shell.trashItem(p); break; }
-      catch (e) { if (i >= 8) throw new Error('Не удалось удалить: файл занят другой программой (например, OBS ещё записывает его).'); await new Promise(r => setTimeout(r, 400)); }
+      catch (e) {
+        // Electron refuses (rather than deleting for good) when an item can't be recycled
+        if (i >= 8) throw new Error('Файл не удалён: Windows не может положить его в корзину. Так бывает, если файл занят (например, OBS ещё записывает его), лежит на флешке или в сетевой папке либо больше, чем вмещает корзина.');
+        await new Promise(r => setTimeout(r, 400));
+      }
     }
     if (media) { media.files = media.files.filter(f => f.path !== p); fs.writeFile(mediaFile, JSON.stringify(media), () => {}); }
     return true;
@@ -585,6 +681,7 @@ function init() {
   });
 
   // ---------- window ----------
+  let hookQuit = false;   // a smoke test ends the app itself: no "still saving" question then
   const stateFile = path.join(app.getPath('userData'), 'window.json');
   function loadState() { try { return JSON.parse(fs.readFileSync(stateFile, 'utf8')); } catch { return {}; } }
   function saveState() {
@@ -593,10 +690,22 @@ function init() {
     try { fs.writeFileSync(stateFile, JSON.stringify(s)); } catch { }
   }
 
+  // The saved position may be on a monitor that is no longer connected: then open on the main screen.
+  function onScreen(b) {
+    if (!b || !(b.width > 0) || !(b.height > 0)) return {};
+    if (typeof b.x !== 'number' || typeof b.y !== 'number') return { width: b.width, height: b.height };
+    const titleVisible = screen.getAllDisplays().some(({ workArea: a }) =>
+      Math.min(b.x + b.width, a.x + a.width) - Math.max(b.x, a.x) >= 160 &&   // a grabbable piece of the title bar
+      b.y >= a.y - 8 && b.y + 32 <= a.y + a.height);
+    if (titleVisible) return b;
+    const a = screen.getPrimaryDisplay().workArea;
+    return { width: Math.min(b.width, a.width), height: Math.min(b.height, a.height) };
+  }
+
   function createWindow() {
     const s = loadState();
     win = new BrowserWindow({
-      width: 1400, height: 860, ...(s.bounds || {}),
+      width: 1400, height: 860, ...onScreen(s.bounds),
       minWidth: 900, minHeight: 560,
       show: false,
       title: 'RPp',
@@ -608,7 +717,19 @@ function init() {
     });
     if (s.maximized) win.maximize();
     win.once('ready-to-show', () => win.show());
-    win.on('close', saveState);
+    win.on('close', e => {
+      // closing in the middle of saving a clip would silently lose it: ask first
+      if (job && job.state === 'running' && !hookQuit) {
+        const r = dialog.showMessageBoxSync(win, {
+          type: 'warning', title: 'RPp', noLink: true, defaultId: 0, cancelId: 0,
+          buttons: ['Продолжить сохранение', 'Прервать и закрыть'],
+          message: 'Фрагмент ещё сохраняется',
+          detail: 'Если закрыть RPp сейчас, сохранение прервётся и файла фрагмента не будет.',
+        });
+        if (r === 0) { e.preventDefault(); return; }
+      }
+      saveState();
+    });
     win.on('closed', () => { win = null; });
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     win.webContents.on('will-navigate', e => e.preventDefault());
@@ -639,7 +760,8 @@ function init() {
             last = now;
           }
         })();
-        if (process.env.OBSP_EVAL) await win.webContents.executeJavaScript(process.env.OBSP_EVAL).catch(e => console.error(e));
+        // runs as a user gesture, so tests can also enter fullscreen
+        if (process.env.OBSP_EVAL) await win.webContents.executeJavaScript(process.env.OBSP_EVAL, true).catch(e => console.error(e));
         recording = false;
         await loop;
         if (rec) {
@@ -648,6 +770,7 @@ function init() {
           fs.writeFileSync(path.join(rec, 'frames.txt'), list + `\nfile '${frames[frames.length - 1][0]}'\n`);
         }
         if (shot) fs.writeFileSync(shot, (await win.webContents.capturePage()).toPNG());
+        hookQuit = true;
         app.quit();
       }, Number(process.env.OBSP_SCREENSHOT_DELAY) || 5000));
     }
@@ -668,14 +791,22 @@ function init() {
     if ((!process.env.OBSP_SCREENSHOT && !process.env.OBSP_RECORD) || process.env.OBSP_CHECK_UPDATES) scheduleChecks();
     setTimeout(scanMedia, 2000); // let the window and the first thumbnails go first
     setTimeout(cleanPlayable, 10000);
+    setTimeout(pruneThumbs, 30000);
+    setTimeout(cleanUpdates, 60000);
     if (fs.existsSync(ffmpegPath) || ffmpegPath === 'ffmpeg') setTimeout(pickEncoder, 3000);
   });
 
   app.on('window-all-closed', () => {
-    if (job && job.state === 'running') { job.cancelled = true; job.proc.kill(); }
-    if (conv && conv.state === 'running') { conv.state = 'cancelled'; conv.proc.kill(); }
     server.close();
     app.quit();
+  });
+  // Stop every helper process and remove what they left half-written (an unfinished clip, an unfinished copy).
+  app.on('will-quit', () => {
+    const partial = [];
+    if (job && job.state === 'running') { job.cancelled = true; partial.push(job.out); }
+    if (conv && conv.state === 'running') { conv.state = 'cancelled'; partial.push(conv.out + '.part'); }
+    for (const p of kids) { try { p.kill(); } catch { } }
+    partial.forEach(rmSoonSync);
   });
 }
 

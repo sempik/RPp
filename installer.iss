@@ -84,6 +84,14 @@ Root: HKCU; Subkey: "Software\Classes\.ts\OpenWithProgids"; ValueType: string; V
 Root: HKCU; Subkey: "Software\Classes\.webm\OpenWithProgids"; ValueType: string; ValueName: "RPp.Video"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: string; ValueName: "RPp.Video"; ValueData: ""; Flags: uninsdeletevalue
 
+[UninstallDelete]
+; caches RPp made for itself (copies of FLV/TS for viewing can take up to 20 GB, library thumbnails, the downloaded
+; update); settings and playback positions stay in case RPp is installed again
+Type: filesandordirs; Name: "{userappdata}\RPp\playable"
+Type: filesandordirs; Name: "{userappdata}\RPp\thumbs"
+Type: files; Name: "{userappdata}\RPp\media.json"
+Type: filesandordirs; Name: "{%TEMP}\RPp-update"
+
 [Run]
 Filename: "{app}\RPp.exe"; Description: "{cm:LaunchProgram,RPp}"; Flags: nowait postinstall skipifsilent
 ; update started from inside RPp (/SILENT /RELAUNCH=1): open the new version when done
