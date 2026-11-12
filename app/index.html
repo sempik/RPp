@@ -115,8 +115,47 @@
   .tile .thumb video.preview.on { opacity: 1; }
   .tile.previewing .play { opacity: 0 !important; }
   .tile .dur, .tile .watched { z-index: 1; }
-  .tile.folder .thumb { display: grid; place-items: center; background: var(--layer); }
-  .tile.folder .thumb .ic { font-size: 40px; color: #ffd75e; }
+  /* a folder is a stack of cards: the newest video on top, how many are inside, a pin in the corner */
+  .tile.folder { position: relative; padding-top: 9px; }
+  .tile.folder::before, .tile.folder::after { content: ""; position: absolute; height: 8px; border-radius: 5px 5px 0 0; transition: background .12s; }
+  .tile.folder::before { top: 0; left: 20px; right: 20px; background: #ffffff0f; }
+  .tile.folder::after { top: 4px; left: 10px; right: 10px; background: #ffffff1c; }
+  .tile.folder:hover::after { background: #ffffff40; }
+  .tile.folder .thumb { background: linear-gradient(140deg, #383838, #262626); }
+  .tile.folder .thumb img { filter: brightness(.8); }
+  .tile.folder .glyph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 38px; color: #ffffff38; }
+  .tile.folder .badge { position: absolute; left: 6px; bottom: 6px; z-index: 1; display: none; align-items: center; gap: 6px;
+    padding: 2px 8px 2px 6px; border-radius: 3px; background: #000000b8; font-size: 12px; }
+  .tile.folder .badge.show { display: flex; }
+  .tile.folder .badge .ic { font-size: 12px; color: #ffd75e; }
+  .tile.folder .pin { position: absolute; top: 6px; right: 6px; z-index: 2; width: 28px; height: 28px; border-radius: 4px; display: grid; place-items: center;
+    background: #000000a8; font-size: 13px; opacity: 0; transition: opacity .12s, background .12s; }
+  .tile.folder:hover .pin, .tile.folder:focus-visible .pin, .tile.folder.pinned .pin { opacity: 1; }
+  .tile.folder.pinned .pin { color: var(--accent); }
+  .tile.folder .pin:hover { background: #000000e6; }
+  .tile.folder.nothing { opacity: .5; }
+  .tile.addfolder { padding-top: 9px; }
+  .tile.addfolder .thumb { display: grid; place-items: center; align-content: center; gap: 8px; background: none; box-shadow: none;
+    border: 1px dashed #ffffff3d; color: var(--text-2); transition: border-color .12s, color .12s, background .12s; }
+  .tile.addfolder:hover .thumb { box-shadow: none; border-color: var(--accent); color: var(--text); background: #ffffff08; }
+  .tile.addfolder .thumb .ic { font-size: 22px; }
+  .lib-group h2 small { margin-left: 10px; font: 400 13px var(--font); color: var(--text-3); }
+  .lib-more { display: flex; gap: 8px; margin-top: 18px; }
+  .lib-note { display: flex; align-items: center; gap: 10px; margin-top: 26px; color: var(--text-3); font-size: 13px; }
+  /* quick switch between the user's folders */
+  .shelf { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+  body.all .shelf, body.all .pathrow, body.home .pathrow { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 32px; max-width: 260px; padding: 0 14px 0 12px; border-radius: 16px;
+    border: 1px solid #ffffff14; background: #ffffff0a; color: var(--text-2); cursor: pointer; white-space: nowrap; }
+  .chip span:not(.ic) { overflow: hidden; text-overflow: ellipsis; }
+  .chip .ic { font-size: 13px; }
+  .chip:hover { background: #ffffff17; color: var(--text); }
+  .chip.on { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
+  .chip.add { border-style: dashed; background: none; }
+  .chip.add:hover { border-color: var(--accent); }
+  .pathrow { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; }
+  .pathrow .crumbs { margin: 0; flex: 1; min-width: 0; }
+  .pathrow .btn.on { color: var(--accent); }
   .tile.current .thumb { box-shadow: 0 0 0 2px var(--accent); }
   .empty { margin-top: 60px; text-align: center; color: var(--text-3); }
   .empty .ic { display: block; font-size: 48px; margin-bottom: 14px; color: #ffffff40; }
@@ -242,6 +281,8 @@
   .trim.show { display: block; }
   .trim-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
   .trim-title { font: 600 14px var(--font); margin-right: 4px; }
+  /* what to save and the buttons: kept together, so on a narrow window they move to the next line as one */
+  .trim-acts { display: flex; align-items: center; gap: 12px; margin-left: auto; }
   .field { display: flex; align-items: center; gap: 4px; color: var(--text-2); }
   .tin {
     width: 112px; height: 32px; padding: 0 10px; border-radius: 4px; outline: none; user-select: text; text-align: center;
@@ -267,6 +308,31 @@
   .job.done .jobtxt { color: var(--ok); }
   .job.error .jobtxt { color: var(--danger); white-space: pre-wrap; font-size: 12px; }
   .warn { color: #fce100; font-size: 12px; }
+  .btn.toggle.on { color: var(--accent); border-color: var(--accent); }
+
+  /* sound tracks under the trim panel: one lane per track, lined up with the seek bar below */
+  .lanes { display: none; flex-direction: column; gap: 4px; margin: 0 0 6px; }
+  .lanes.show { display: flex; }
+  .lane { display: flex; align-items: center; gap: 14px; }
+  .lane-side { flex: none; width: 64px; display: flex; gap: 4px; }
+  .lane-side.r { justify-content: flex-end; }
+  .lane.arm .lane-body { cursor: crosshair; box-shadow: 0 0 0 1px #ff5f57; }
+  .lane-btn.cutb.on { color: #ff5f57; }
+  .lane-btn { width: 30px; height: 28px; border: 0; border-radius: 4px; background: #ffffff14; font-size: 14px; cursor: pointer; display: grid; place-items: center; }
+  .lane-btn:hover { background: #ffffff26; }
+  .lane-btn.on { color: var(--accent); }
+  .lane.off .lane-btn.inc { color: var(--text-3); background: #ffffff0a; }
+  .lane-body { position: relative; flex: 1; min-width: 0; height: 32px; border-radius: 4px; overflow: hidden; background: #00000073;
+    box-shadow: 0 0 0 1px #ffffff14; cursor: pointer; touch-action: none; }
+  .lane-body canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .lane-name { position: absolute; left: 6px; top: 50%; transform: translateY(-50%); max-width: 70%; padding: 1px 7px; border-radius: 3px;
+    background: #000000b0; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+  .lane.off .lane-name { color: var(--text-3); text-decoration: line-through; }
+  .lane-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #ff5f57; box-shadow: 0 0 3px #000; pointer-events: none; }
+  .lanes-cap { display: flex; justify-content: space-between; gap: 12px; margin: 0 78px; font-size: 11px; color: var(--text-2);
+    font-variant-numeric: tabular-nums; text-shadow: 0 1px 2px #000; }
+  .lanes-cap span:nth-child(2) { color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lane-none { margin: 0 78px; padding: 6px 10px; border-radius: 4px; background: #00000073; color: var(--text-2); font-size: 12px; }
 
   /* "more" menu */
   .menu { position: absolute; right: 24px; bottom: 76px; width: 300px; padding: 4px; display: none; z-index: 20; }
@@ -352,7 +418,12 @@
     </div>
   </div>
   <nav class="pivot" id="pivot"><button data-view="folders">Папки</button><button data-view="all">Все видео</button></nav>
-  <nav class="crumbs" id="crumbs"></nav>
+  <nav class="shelf" id="shelf"></nav>
+  <div class="pathrow">
+    <nav class="crumbs" id="crumbs"></nav>
+    <button class="btn subtle" id="bPin"><span class="ic" id="bPinIc">&#xE718;</span><span id="bPinTxt">Закрепить</span></button>
+    <button class="btn subtle" id="bExplore" title="Открыть эту папку в Проводнике"><span class="ic">&#xED25;</span></button>
+  </div>
   <div class="scanline" id="scanline"></div>
   <div id="groups"></div>
   <div id="more"></div>
@@ -382,15 +453,18 @@
           <input class="tin" id="outT" placeholder="не задано" spellcheck="false">
           <button class="ib ic" id="bSetOut" title="Взять текущее время (O)">&#xE823;</button>
         </div>
-        <span class="seldur">Длительность <b id="selDur">—</b></span>
+        <span class="seldur" title="Длительность фрагмента">Длина <b id="selDur">—</b></span>
         <button class="ib ic" id="bLoop" title="Повторять фрагмент (P)">&#xE8EE;</button>
-        <div class="spacer"></div>
+        <div class="trim-acts">
+        <button class="btn toggle" id="bMix" style="display:none" title="Смешать выбранные дорожки в одну. Телеграм, Дискорд и многие плееры играют только первую дорожку, так что без этого в копии будет слышно не всё. Картинка при этом не перекодируется."><span class="ic">&#xE8D6;</span>Свести</button>
         <div class="radios" id="mode">
           <label title="Без перекодирования: мгновенно, без потери качества. Начало сдвигается к ближайшему ключевому кадру."><input type="radio" name="mode" value="copy" checked>Быстро</label>
           <label title="С перекодированием: точно до кадра, на видеокарте, если она есть."><input type="radio" name="mode" value="encode">Точно</label>
+          <label title="Сохранить только звук фрагмента, без картинки: файл .m4a рядом с записью. В него попадают включённые дорожки."><input type="radio" name="mode" value="audio">Только звук</label>
         </div>
         <button class="btn" id="bTrimClose">Отмена</button>
         <button class="btn accent" id="bCut" title="Ctrl+Enter">Сохранить копию</button>
+        </div>
       </div>
       <span class="warn" id="warn"></span>
       <div class="job" id="job">
@@ -401,6 +475,7 @@
         <button class="btn" id="bOpenOut">Открыть</button>
       </div>
     </div>
+    <div class="lanes" id="lanes"></div>
 
     <div class="seekrow">
       <button class="time" id="tCur" title="Скопировать текущее время (Ctrl+C)">0:00:00</button>
@@ -436,6 +511,7 @@
     <div class="menu acrylic" id="menu">
       <div class="mlabel">Скорость воспроизведения</div>
       <div class="speeds" id="speeds"></div>
+      <div id="menuTracks"></div>
       <div class="msep"></div>
       <button class="mi" id="miPrev"><span class="ic">&#xE892;</span>Предыдущий кадр<span class="k">,</span></button>
       <button class="mi" id="miNext"><span class="ic">&#xE893;</span>Следующий кадр<span class="k">.</span></button>
@@ -510,6 +586,13 @@
   <button class="mi" id="ctxFolder"><span class="ic">&#xE838;</span>Открыть папку с файлом</button>
   <div class="msep"></div>
   <button class="mi danger" id="ctxDelete"><span class="ic">&#xE74D;</span>Удалить</button>
+</div>
+<div class="ctx acrylic" id="fctx">
+  <button class="mi" id="fctxOpen"><span class="ic">&#xE8B7;</span>Открыть</button>
+  <button class="mi" id="fctxPin"><span class="ic" id="fctxPinIc">&#xE718;</span><span id="fctxPinTxt">Закрепить</span></button>
+  <button class="mi" id="fctxExplore"><span class="ic">&#xED25;</span>Открыть в Проводнике</button>
+  <div class="msep" id="fctxSep"></div>
+  <button class="mi" id="fctxHide"><span class="ic">&#xED1A;</span>Скрыть из списка</button>
 </div>
 <div class="dialog" id="fb">
   <div class="card acrylic">
@@ -601,7 +684,7 @@
       v.pause(); savePos(); closeMenu(); clearStageMsg();
       if (document.fullscreenElement) document.exitFullscreen();
       $('docTitle').textContent = ''; document.title = 'RPp';
-      if (curDir || view === 'all') refreshView(true);
+      refreshView(true);
     }
     wake();
   }
@@ -627,7 +710,8 @@
       if (my !== listReq) return;          // the user already went somewhere else
       const scroll = $('library').scrollTop;
       curDir = d.dir; store.set('dir', d.dir); listing = d;
-      renderCrumbs(d.dir);
+      setHome(false);
+      renderCrumbs(d.dir); renderShelf();
       renderLibrary(d);
       if (keepScroll) $('library').scrollTop = scroll;
     } catch (e) {
@@ -659,11 +743,206 @@
     });
   }
 
+  // ---------- folders: pinned ones, the ones found on the disks, and the "all folders" screen ----------
+  // "Home" lists every folder that has videos (the background scan already knows them), so nobody has to
+  // walk the disk tree; pinned folders also sit in the shelf above for one-click switching.
+  const lower = p => p.replace(/[\\/]+$/, '').toLowerCase();
+  const dirOf = p => p.slice(0, p.lastIndexOf('\\'));
+  const folderName = p => { const s = p.replace(/[\\/]+$/, ''); return /^[A-Za-z]:$/.test(s) ? 'Диск ' + s.toUpperCase() : baseName(s); };
+  let home = false, pins = store.get('pins', null), hidden = new Set(store.get('hidden', [])), showAllFound = false;
+  let dirIndex = new Map();   // folder (lower case) -> { path, count, size, newest } for the videos lying right in it
+  function buildDirIndex() {
+    dirIndex = new Map();
+    for (const f of media ? media.files : []) {
+      const dir = dirOf(f.path), k = lower(dir);
+      let d = dirIndex.get(k);
+      if (!d) dirIndex.set(k, d = { path: dir, count: 0, size: 0, newest: f });
+      d.count++; d.size += f.size;
+      if (f.mtime > d.newest.mtime) d.newest = f;
+    }
+  }
+  // the folder together with everything below it
+  function subtree(dir) {
+    const k = lower(dir), pre = k + '\\';
+    let r = null;
+    for (const [key, d] of dirIndex) {
+      if (key !== k && !key.startsWith(pre)) continue;
+      if (!r) r = { count: 0, size: 0, newest: d.newest };
+      r.count += d.count; r.size += d.size;
+      if (d.newest.mtime > r.newest.mtime) r.newest = d.newest;
+    }
+    return r;
+  }
+  const isPinned = dir => !!pins && pins.some(p => lower(p) === lower(dir));
+  function togglePin(dir) {
+    const was = isPinned(dir);
+    pins = (pins || []).filter(p => lower(p) !== lower(dir));
+    if (!was) pins.push(dir.length > 3 ? dir.replace(/[\\/]+$/, '') : dir);
+    store.set('pins', pins);
+    toast(was ? 'Папка откреплена' : 'Папка закреплена: ' + folderName(dir));
+    renderShelf(); syncPinButton();
+    if (home) renderHome(true); else if (listing) { const s = $('library').scrollTop; renderLibrary(listing); $('library').scrollTop = s; }
+  }
+  function setHome(on) {
+    home = on; store.set('home', on);
+    document.body.classList.toggle('home', on);
+  }
+  function openHome() {
+    listReq++;                 // a folder that is still loading must not replace this screen
+    setHome(true); listing = null;
+    $('library').scrollTop = 0;
+    renderShelf(); renderHome();
+  }
+  async function addFolder() {
+    const p = await N.pickFolder(home ? null : curDir).catch(() => null);
+    if (!p) return;
+    if (!isPinned(p)) { pins = [...(pins || []), p]; store.set('pins', pins); }
+    hidden.delete(lower(p)); store.set('hidden', [...hidden]);
+    openDir(p);
+  }
+  function renderShelf() {
+    const s = $('shelf'); s.innerHTML = '';
+    const chip = (icon, text, on, fn, title) => {
+      const b = document.createElement('button'); b.className = 'chip' + (on ? ' on' : '');
+      b.innerHTML = `<span class="ic">${icon}</span><span>${esc(text)}</span>`;
+      if (title) b.title = title;
+      b.onclick = fn; s.appendChild(b); return b;
+    };
+    chip('&#xF0E2;', 'Все папки', home, openHome, 'Все папки, в которых есть видео');
+    // inside a pinned folder (or deeper) its chip is lit; of nested pins, the closest one
+    const here = !home && curDir ? lower(curDir) : null;
+    let best = null;
+    for (const p of pins || []) {
+      const k = lower(p);
+      if (here !== null && (here === k || here.startsWith(k + '\\')) && (!best || k.length > lower(best).length)) best = p;
+    }
+    for (const p of pins || []) {
+      const b = chip('&#xE8B7;', folderName(p), p === best, () => openDir(p), p);
+      b.oncontextmenu = e => showFctx(e, p, false);
+    }
+    chip('&#xE710;', 'Добавить папку', false, addFolder, 'Выбрать папку с видео и закрепить её здесь').classList.add('add');
+  }
+  function syncPinButton() {
+    const on = !!curDir && isPinned(curDir);
+    $('bPin').classList.toggle('on', on);
+    $('bPinIc').innerHTML = on ? '&#xE840;' : '&#xE718;';
+    $('bPinTxt').textContent = on ? 'Закреплена' : 'Закрепить';
+    $('bPin').title = on ? 'Убрать папку из закреплённых' : 'Закрепить папку: она появится сверху и на экране «Все папки»';
+  }
+  $('bPin').onclick = () => curDir && togglePin(curDir);
+  $('bExplore').onclick = () => curDir && N.openFolder(curDir);
+
+  // One folder card. Numbers and the cover come from the scan; a folder the scan doesn't know
+  // (a network drive, a skipped system folder) is looked into when its card scrolls into view.
+  function folderTile(dir, onHome) {
+    const st = subtree(dir), pinned = isPinned(dir);
+    const b = document.createElement('button');
+    b.className = 'tile folder' + (pinned ? ' pinned' : '');
+    b.title = dir; b._dir = dir; b._cover = st && st.newest;
+    b.innerHTML = `<div class="thumb"><img alt=""><span class="glyph ic">&#xE8B7;</span>` +
+      `<span class="badge"><span class="ic">&#xE8B7;</span><span class="cnt"></span></span>` +
+      `<span class="pin ic" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '&#xE840;' : '&#xE718;'}</span></div>` +
+      `<div class="name">${esc(folderName(dir))}</div><div class="sub"></div>`;
+    const sub = b.querySelector('.sub'), where = onHome ? parentDir(dir) : '';
+    const fill = (count, size) => {
+      if (count) { b.querySelector('.cnt').textContent = count.toLocaleString('ru') + ' видео'; b.querySelector('.badge').classList.add('show'); }
+      sub.textContent = [where !== dir && where, size ? fmtSize(size) : ''].filter(Boolean).join(' · ') || (onHome ? dir : '');
+    };
+    fill(st && st.count, st && st.size);
+    b._fill = fill;
+    b.querySelector('.pin').onclick = e => { e.stopPropagation(); togglePin(dir); };
+    b.onclick = () => openDir(dir);
+    b.oncontextmenu = e => showFctx(e, dir, onHome && !pinned);
+    io.observe(b);
+    return b;
+  }
+  async function loadCover(tile) {
+    let f = tile._cover;
+    if (!f) {
+      const d = await N.list(tile._dir).catch(() => null);
+      if (d && !d.files.length && !d.dirs.length) tile.classList.add('nothing');   // nothing to watch inside: step back visually
+      if (!d || !tile.isConnected || !d.files.length) return;
+      f = d.files[0];
+      tile._fill(d.files.length, d.files.reduce((a, x) => a + x.size, 0));
+    }
+    let t = thumbCache.get(thumbKey(f));
+    if (!t) { t = await N.thumb(f.path).catch(() => null); if (t) thumbCache.set(thumbKey(f), t); }
+    if (!t || !t.img || !tile.isConnected) return;
+    const img = tile.querySelector('img'), g = tile.querySelector('.glyph');
+    img.onload = () => { img.classList.add('ready'); if (g) g.remove(); };
+    img.src = t.img;
+  }
+  function renderHome(keepScroll) {
+    const scroll = $('library').scrollTop;
+    stopPreview(); io.disconnect(); hideCtx();
+    pending = [];
+    $('groups').innerHTML = '';
+    const mine = group('Закреплённые');
+    for (const p of pins || []) mine.appendChild(folderTile(p, true));
+    const add = document.createElement('button'); add.className = 'tile addfolder';
+    add.innerHTML = `<div class="thumb"><span class="ic">&#xE710;</span><span>Добавить папку</span></div>`;
+    add.onclick = addFolder;
+    mine.appendChild(add);
+
+    const found = [...dirIndex.values()].filter(d => !isPinned(d.path) && !hidden.has(lower(d.path)))
+      .sort((a, b) => b.newest.mtime - a.newest.mtime);
+    const LIMIT = 24;
+    if (found.length) {
+      const tiles = group('Найдено на компьютере');
+      tiles.previousElementSibling.insertAdjacentHTML('beforeend', `<small>папки, в которых лежат видео; сначала свежие</small>`);
+      for (const d of showAllFound ? found : found.slice(0, LIMIT)) tiles.appendChild(folderTile(d.path, true));
+      const more = document.createElement('div'); more.className = 'lib-more';
+      if (!showAllFound && found.length > LIMIT) {
+        const b = document.createElement('button'); b.className = 'btn';
+        b.textContent = `Показать ещё ${found.length - LIMIT}`;
+        b.onclick = () => { showAllFound = true; renderHome(true); };
+        more.appendChild(b);
+      }
+      if (hidden.size) {
+        const b = document.createElement('button'); b.className = 'btn subtle';
+        b.textContent = `Вернуть скрытые (${hidden.size})`;
+        b.onclick = () => { hidden.clear(); store.set('hidden', []); renderHome(true); };
+        more.appendChild(b);
+      }
+      if (more.children.length) tiles.parentNode.appendChild(more);
+    } else {
+      const note = document.createElement('div'); note.className = 'lib-note';
+      if (scanning || !media) note.innerHTML = `<span class="spin"></span>Ищу папки с видео на дисках…`;
+      else if (hidden.size) {
+        const b = document.createElement('button'); b.className = 'btn subtle';
+        b.textContent = `Вернуть скрытые папки (${hidden.size})`;
+        b.onclick = () => { hidden.clear(); store.set('hidden', []); renderHome(true); };
+        note.appendChild(b);
+      } else note.textContent = 'Других папок с видео на этом компьютере не нашлось.';
+      $('groups').appendChild(note);
+    }
+    if (keepScroll) $('library').scrollTop = scroll;
+  }
+
+  // right-click on a folder card or a shelf chip
+  let fctxDir = null;
+  function showFctx(e, dir, canHide) {
+    e.preventDefault(); hideCtx();
+    fctxDir = dir;
+    const pinned = isPinned(dir);
+    $('fctxPinIc').innerHTML = pinned ? '&#xE77A;' : '&#xE718;';
+    $('fctxPinTxt').textContent = pinned ? 'Открепить' : 'Закрепить';
+    $('fctxSep').style.display = $('fctxHide').style.display = canHide ? '' : 'none';
+    const m = $('fctx'); m.classList.add('show');
+    m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + 'px';
+    m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + 'px';
+  }
+  const fctxDo = fn => () => { const d = fctxDir; hideCtx(); if (d) fn(d); };
+  $('fctxOpen').onclick = fctxDo(d => openDir(d));
+  $('fctxPin').onclick = fctxDo(togglePin);
+  $('fctxExplore').onclick = fctxDo(d => N.openFolder(d));
+  $('fctxHide').onclick = fctxDo(d => { hidden.add(lower(d)); store.set('hidden', [...hidden]); renderHome(true); });
+
   // keyed by size and date too: a file that was re-saved or finished recording gets a fresh picture and duration
   const thumbCache = new Map();
   const thumbKey = f => `${f.path}|${f.size}|${f.mtime}`;
   const io = new IntersectionObserver(entries => {
-    for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); loadThumb(e.target); }
+    for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); e.target._dir ? loadCover(e.target) : loadThumb(e.target); }
   }, { root: $('library'), rootMargin: '300px' });
   async function loadThumb(tile) {
     const f = tile._file, p = f.path, key = thumbKey(f);
@@ -734,7 +1013,7 @@
     refreshView();
   }
   function refreshView(keepScroll) {
-    if (view === 'folders') return openDir(curDir, keepScroll);
+    if (view === 'folders') return home ? (renderShelf(), renderHome(keepScroll)) : openDir(curDir, keepScroll);
     const scroll = $('library').scrollTop;
     renderAll();
     if (keepScroll) $('library').scrollTop = scroll;
@@ -757,7 +1036,14 @@
   }
   for (const b of $('pivot').children) b.onclick = () => view !== b.dataset.view && setView(b.dataset.view);
   N.onMediaProgress(p => { scanning = true; scanInfo = p; if (view === 'all') { renderScanline(); if (!media) renderAll(); } });
-  N.onMedia(m => { media = m; scanning = false; scanInfo = null; if (view === 'all' && !document.body.classList.contains('play')) refreshView(true); });
+  // a fresh list of videos: the "all videos" tab and the folder cards (covers, counts) are redrawn in place
+  function mediaChanged() {
+    buildDirIndex();
+    if (document.body.classList.contains('play')) return;
+    if (view === 'all' || home) refreshView(true);
+    else if (listing && listing.dirs.length) { const s = $('library').scrollTop; renderLibrary(listing); $('library').scrollTop = s; }
+  }
+  N.onMedia(m => { media = m; scanning = false; scanInfo = null; mediaChanged(); });
 
   // ---------- hover preview: hold the cursor on a tile and the video plays inside it, muted ----------
   const PREVIEW_DELAY = 2000;
@@ -796,21 +1082,18 @@
     stopPreview();
     io.disconnect();   // the old tiles are thrown away: stop watching them, or they'd never be freed
     $('groups').innerHTML = '';
+    syncPinButton();
     if (d.dirs.length) {
       const tiles = group('Папки');
-      for (const x of d.dirs) {
-        const b = document.createElement('button'); b.className = 'tile folder';
-        b.innerHTML = `<div class="thumb"><span class="ic">&#xE8B7;</span></div><div class="name">${esc(x.name)}</div>`;
-        b.onclick = () => openDir(x.path);
-        tiles.appendChild(b);
-      }
+      for (const x of d.dirs) tiles.appendChild(folderTile(x.path, false));
     }
     renderFiles(d.files, false);
     const root = $('groups');
     if (!d.dirs.length && !d.files.length) {
       root.innerHTML = `<div class="empty"><span class="ic">&#xE714;</span><b>Здесь пока нет видео</b>
-        Записи OBS из этой папки появятся здесь.<br><button class="btn accent" id="bEmptyOpen">Открыть файл</button></div>`;
+        Записи OBS из этой папки появятся здесь.<br><button class="btn accent" id="bEmptyPick">Выбрать другую папку</button> <button class="btn" id="bEmptyOpen">Открыть файл</button></div>`;
       $('bEmptyOpen').onclick = openFileDialog;
+      $('bEmptyPick').onclick = addFolder;
     }
   }
 
@@ -821,6 +1104,8 @@
     savePos();
     stopPreview(); hideCtx();
     cur = { path, name: baseName(path) };
+    aud = null; renderLanes();
+    if (autoMuted) { v.muted = false; autoMuted = false; }
     clearStageMsg();
     v.src = videoBase + encodeURIComponent(path);
     $('docTitle').textContent = cur.name;
@@ -1004,16 +1289,17 @@
   // volume
   const vol = $('vol');
   v.volume = store.get('vol', 1); v.muted = store.get('muted', false);
+  var autoMuted = false;   // silenced for a moment by a cut-out piece of sound, not by the user (var: used before this line runs)
   const syncVol = () => {
-    const val = v.muted ? 0 : v.volume;
+    const off = v.muted && !autoMuted, val = off ? 0 : v.volume;
     $('bMute').textContent = val === 0 ? '' : val < .34 ? '' : val < .67 ? '' : '';
     vol.value = val; vol.style.setProperty('--p', val * 100 + '%');
     $('volPct').textContent = Math.round(val * 100);
-    store.set('vol', v.volume); store.set('muted', v.muted);
+    store.set('vol', v.volume); store.set('muted', off);
   };
   vol.oninput = () => { v.volume = +vol.value; v.muted = v.volume === 0; syncVol(); };
   vol.onchange = () => vol.blur();
-  $('bMute').onclick = () => { v.muted = !v.muted; if (!v.muted && v.volume === 0) v.volume = 0.5; syncVol(); };
+  $('bMute').onclick = () => { const off = v.muted && !autoMuted; autoMuted = false; v.muted = !off; if (!v.muted && v.volume === 0) v.volume = 0.5; syncVol(); };
   function nudgeVol(d) { v.muted = false; v.volume = clamp(v.volume + d, 0, 1); syncVol(); toast('Громкость ' + Math.round(v.volume * 100)); }
   syncVol();
 
@@ -1058,6 +1344,8 @@
   const mode = () => document.querySelector('#mode input:checked').value;
   function showTrim(on) {
     $('trim').classList.toggle('show', on); $('bTrim').classList.toggle('on', on);
+    $('lanes').classList.toggle('show', on);
+    if (on) { loadAudio(); setWindow(false); drawLanes(); }
     drawTimeline(); wake();
   }
   function setIn(t) { inT = t; syncSel(); }
@@ -1067,7 +1355,7 @@
     if (document.activeElement !== $('outT')) $('outT').value = outT === null ? '' : fmt(outT);
     const ok = inT !== null && outT !== null && outT > inT;
     $('selDur').textContent = ok ? fmt(outT - inT) : '—';
-    updateCutState(); drawTimeline();
+    updateCutState(); drawTimeline(); drawLanes(); scheduleWindow();
   }
   function markIn() {
     if (!dur()) return;
@@ -1110,18 +1398,308 @@
     if (loop && v.paused) v.play().catch(() => {});
   };
 
+  // ---------- sound tracks in the trim panel ----------
+  // A lane per track with its waveform: where the talking and the silence are is visible before cutting.
+  // The speaker button decides whether the track goes into the saved copy; with several tracks
+  // (OBS: game, microphone, voice chat) the headphones choose which one is heard while watching.
+  let aud = null, laneDrag = false, mixOn = store.get('audMix', false);
+  const cutStore = new Map();   // file -> pieces cut out of each of its tracks, [{ a, b }] in seconds
+  const LAYOUTS = { mono: 'моно', stereo: 'стерео' };
+  const trackName = (t, i) => t.title || 'Дорожка ' + (i + 1);
+  const heardTrack = () => { const at = v.audioTracks; if (at) for (let i = 0; i < at.length; i++) if (at[i].enabled) return i; return 0; };
+  // switching is only offered when the player sees the same tracks as ffmpeg does
+  const canHear = () => !!(aud && aud.tracks && aud.tracks.length > 1 && v.audioTracks && v.audioTracks.length === aud.tracks.length);
+  function hearTrack(i) {
+    const at = v.audioTracks;
+    if (!at || !at[i] || at[i].enabled) return;
+    at[i].enabled = true;
+    if (dur()) v.currentTime = v.currentTime;   // drop what was buffered from the old track: the switch is heard at once
+    syncHear();
+  }
+  function syncHear() {
+    const h = heardTrack();
+    if (aud && aud.els) aud.els.forEach((el, i) => el.hear && el.hear.classList.toggle('on', i === h));
+    [...$('menuTracks').querySelectorAll('.mi')].forEach((b, i) => b.classList.toggle('checked', i === h));
+  }
+  // the same choice in the "more" menu, for watching without the trim panel
+  function renderMenuTracks() {
+    const at = v.audioTracks, m = $('menuTracks');
+    m.innerHTML = '';
+    if (!at || at.length < 2) return;
+    m.innerHTML = '<div class="msep"></div><div class="mlabel">Звуковая дорожка</div>';
+    for (let i = 0; i < at.length; i++) {
+      const label = at[i].label && !/handler$/i.test(at[i].label) ? at[i].label : 'Дорожка ' + (i + 1);
+      const b = document.createElement('button'); b.className = 'mi';
+      b.innerHTML = `<span class="ic">&#xE8D6;</span><span>${esc(label)}</span><span class="chk ic">&#xE73E;</span>`;
+      b.onclick = () => hearTrack(i);
+      m.appendChild(b);
+    }
+    syncHear();
+  }
+  v.addEventListener('loadedmetadata', () => { renderMenuTracks(); renderLanes(); if (aud && !aud.win) setWindow(true); });
+  v.addEventListener('emptied', renderMenuTracks);
+
+  async function loadAudio() {
+    if (!cur || (aud && aud.path === cur.path)) return;
+    const file = cur.path;
+    const a = aud = { path: file, tracks: null, on: [], els: [], win: null, data: null, state: 'idle', percent: 0, req: 0, arm: null, cuts: [] };
+    renderLanes();
+    try { a.tracks = (await N.audio(file)).tracks; } catch { a.tracks = []; a.state = 'error'; }
+    if (aud !== a) return;
+    // several tracks: the choice made last time for a recording with as many tracks is kept
+    const saved = a.tracks.length > 1 ? store.get('audSel:' + a.tracks.length, null) : null;
+    a.on = a.tracks.map((_, i) => !saved || saved[i] !== false);
+    // pieces of sound cut out of this file earlier in this session are still there when it's opened again
+    if (!cutStore.has(file) || cutStore.get(file).length !== a.tracks.length) cutStore.set(file, a.tracks.map(() => []));
+    a.cuts = cutStore.get(file);
+    renderLanes(); updateCutState();
+    setWindow(true);
+  }
+
+  // What part of the recording the lanes show. A short file: all of it, lined up with the seek bar below.
+  // A fragment of a long recording would be a hair-thin strip there, so the lanes zoom in on the fragment
+  // and a bit around it: the edges can then be dragged to the exact word.
+  const selOk = () => inT !== null && outT !== null && outT > inT;
+  function wantWindow() {
+    const d = dur();
+    if (!selOk()) return { a: 0, b: d };
+    const len = outT - inT, pad = Math.max(1.5, len * 0.3);
+    const a = Math.max(0, inT - pad), b = Math.min(d, outT + pad);
+    return b - a > d * 0.6 ? { a: 0, b: d } : { a, b };
+  }
+  function setWindow(force) {
+    if (!aud || !aud.tracks || !aud.tracks.length || !dur()) return;
+    const w = aud.win, want = wantWindow(), d = dur();
+    if (!force && w) {
+      const full = w.a === 0 && w.b >= d - 0.01, wantFull = want.a === 0 && want.b >= d - 0.01;
+      if (full && wantFull) return;
+      if (!full && !wantFull && selOk()) {   // the fragment still sits well in the current view: don't jump around
+        const span = w.b - w.a, part = (outT - inT) / span;
+        if (inT >= w.a + span * 0.04 && outT <= w.b - span * 0.04 && part > 0.3 && part < 0.8) return;
+      }
+    }
+    aud.win = want;
+    syncLaneCaption(); drawLanes(); drawTimeline();
+    fetchWave();
+  }
+  let winTimer = null;
+  function scheduleWindow() {
+    clearTimeout(winTimer);
+    winTimer = setTimeout(() => (tlDrag || laneDrag ? scheduleWindow() : setWindow(false)), 350);   // not under the user's hand
+  }
+  async function fetchWave() {
+    const a = aud, w = a.win, my = ++a.req;
+    a.state = 'running'; a.percent = 0; syncLaneNames();
+    try { await N.waveStart(a.path, w.a, w.b); } catch { }
+    while (aud === a && a.req === my) {
+      const r = await N.wave(a.path).catch(() => null);
+      if (aud !== a || a.req !== my) return;
+      const mine = r && Math.abs(r.a - w.a) < 0.01 && Math.abs(r.b - w.b) < 0.01;
+      if (mine && r.peaks.length) a.data = { a: r.a, b: r.b, peaks: r.peaks };
+      if (mine) a.percent = r.percent;
+      if (!r || (mine && r.state !== 'running')) { a.state = r ? r.state : 'error'; break; }
+      syncLaneNames(); drawLanes();
+      await new Promise(res => setTimeout(res, mine ? 400 : 60));
+    }
+    syncLaneNames(); drawLanes();
+  }
+  const mid0 = H => Math.round(H / 2);
+  // While watching, a cut-out piece of the track being heard is silent, the way the saved copy will sound.
+  function previewCuts() {
+    const list = aud && cur && aud.path === cur.path && aud.cuts[heardTrack()], t = v.currentTime;
+    const inHole = !!list && list.some(r => t >= r.a && t < r.b);
+    if (inHole && !v.muted) { v.muted = true; autoMuted = true; }
+    else if (!inHole && autoMuted) { v.muted = false; autoMuted = false; }
+  }
+  const zoomed = () => !!(aud && aud.win && dur() && !(aud.win.a === 0 && aud.win.b >= dur() - 0.01));
+  function syncLaneCaption() {
+    const c = $('lanesCap');
+    if (!c) return;
+    c.style.display = zoomed() ? '' : 'none';
+    if (!zoomed()) return;
+    const span = aud.win.b - aud.win.a, f = t => span < 120 ? fmt(t).slice(0, -2) : fmt(t, false);
+    c.children[0].textContent = f(aud.win.a);
+    c.children[1].textContent = 'звук приближен к фрагменту · края можно двигать прямо здесь';
+    c.children[2].textContent = f(aud.win.b);
+  }
+  function laneLabel(i) {
+    const t = aud.tracks[i];
+    const n = aud.cuts[i] ? aud.cuts[i].length : 0;
+    return [trackName(t, i), LAYOUTS[t.layout] || t.layout, aud.on[i] ? '' : 'не войдёт в копию', n ? 'вырезано кусков: ' + n : '',
+      aud.state === 'running' && aud.percent > 0 && aud.percent < 100 && i < 8 ? `волна ${aud.percent}%` : ''].filter(Boolean).join(' · ');
+  }
+  function syncLaneNames() { if (aud && aud.els) aud.els.forEach((el, i) => { el.name.textContent = laneLabel(i); }); }
+  const laneX = t => (aud && aud.win ? (t - aud.win.a) / (aud.win.b - aud.win.a) : dur() ? t / dur() : 0);
+  function laneTime(e, body) {
+    const r = body.getBoundingClientRect(), k = clamp((e.clientX - r.left) / r.width, 0, 1);
+    return aud.win ? aud.win.a + k * (aud.win.b - aud.win.a) : k * dur();
+  }
+  // which edge of the fragment the pointer is on (within a few pixels), if any
+  function laneEdge(e, body) {
+    if (!selOk()) return null;
+    const r = body.getBoundingClientRect(), x = e.clientX - r.left;
+    const di = Math.abs(x - laneX(inT) * r.width), dout = Math.abs(x - laneX(outT) * r.width);
+    return Math.min(di, dout) > 7 ? null : di <= dout ? 'in' : 'out';
+  }
+  function renderLanes() {
+    const box = $('lanes'); box.innerHTML = '';
+    if (!aud) return;
+    aud.els = [];
+    if (!aud.tracks) return;
+    if (!aud.tracks.length) {
+      box.innerHTML = `<div class="lane-none">${aud.state === 'error' ? 'Не удалось прочитать звуковые дорожки' : 'В этом видео нет звука'}</div>`;
+      return;
+    }
+    box.innerHTML = `<div class="lanes-cap" id="lanesCap"><span></span><span></span><span></span></div>`;
+    const hear = canHear();
+    aud.tracks.forEach((t, i) => {
+      const row = document.createElement('div'); row.className = 'lane';
+      row.innerHTML = `<div class="lane-side"><button class="lane-btn inc ic"></button><button class="lane-btn cutb ic">&#xE75C;</button></div>` +
+        `<div class="lane-body"><canvas></canvas><span class="lane-name"></span><div class="lane-head"></div></div>` +
+        `<div class="lane-side r">${hear ? `<button class="lane-btn hear ic" title="Слушать эту дорожку">&#xE7F6;</button>` : ''}</div>`;
+      const el = { row, inc: row.querySelector('.inc'), body: row.querySelector('.lane-body'), canvas: row.querySelector('canvas'),
+        name: row.querySelector('.lane-name'), head: row.querySelector('.lane-head'), hear: row.querySelector('.hear') };
+      el.inc.onclick = () => { aud.on[i] = !aud.on[i]; if (aud.tracks.length > 1) store.set('audSel:' + aud.tracks.length, aud.on); syncLanes(); };
+      if (el.hear) el.hear.onclick = () => hearTrack(i);
+      el.cutb = row.querySelector('.cutb');
+      el.cutb.onclick = () => {
+        aud.arm = aud.arm === i ? null : i;
+        if (aud.arm === i) toast('Протяните по волне кусок, который нужно убрать из звука');
+        syncLanes();
+      };
+      let hole = null, holeFrom = 0;   // the piece being painted right now
+      const move = e => {
+        const t = laneTime(e, el.body);
+        if (laneDrag === 'hole') { hole.a = Math.min(holeFrom, t); hole.b = Math.max(holeFrom, t); seek(t); drawLanes(); }
+        else if (laneDrag === 'in') { setIn(clamp(t, 0, outT - 0.05)); seek(inT); }
+        else if (laneDrag === 'out') { setOut(clamp(t, inT + 0.05, dur())); seek(outT); }
+        else seek(t);
+      };
+      el.body.addEventListener('pointerdown', e => {
+        if (e.button !== 0 || !dur()) return;
+        if (aud.arm === i || e.shiftKey) {   // cutting a piece out of this track (the tool is on, or Shift is held)
+          laneDrag = 'hole'; holeFrom = laneTime(e, el.body);
+          aud.cuts[i].push(hole = { a: holeFrom, b: holeFrom });
+        } else laneDrag = laneEdge(e, el.body) || 'seek';
+        el.body.setPointerCapture(e.pointerId); move(e); kick();
+      });
+      el.body.addEventListener('pointermove', e => {
+        if (laneDrag) move(e);
+        else el.body.style.cursor = aud.arm === i || e.shiftKey ? 'crosshair' : laneEdge(e, el.body) ? 'ew-resize' : '';
+      });
+      const end = () => {
+        if (laneDrag === 'hole') {
+          // a mere click cuts nothing; pieces that touch become one
+          const list = aud.cuts[i].filter(r => r.b - r.a >= 0.05).sort((x, y) => x.a - y.a), merged = [];
+          for (const r of list) { const last = merged[merged.length - 1]; if (last && r.a <= last.b) last.b = Math.max(last.b, r.b); else merged.push(r); }
+          aud.cuts[i].splice(0, aud.cuts[i].length, ...merged);
+          hole = null; syncLanes();
+        }
+        if (laneDrag) { laneDrag = false; scheduleWindow(); }
+      };
+      el.body.addEventListener('contextmenu', e => {   // right click on a cut-out piece brings the sound back
+        e.preventDefault();
+        const t = laneTime(e, el.body), k = aud.cuts[i].findIndex(r => t >= r.a && t <= r.b);
+        if (k >= 0) { aud.cuts[i].splice(k, 1); syncLanes(); toast('Звук возвращён'); }
+      });
+      el.body.addEventListener('pointerup', end);
+      el.body.addEventListener('pointercancel', end);
+      aud.els.push(el); box.appendChild(row);
+    });
+    syncLanes(); syncHear(); syncLaneCaption();
+  }
+  function syncLanes() {
+    if (!aud || !aud.els) return;
+    aud.els.forEach((el, i) => {
+      const on = aud.on[i];
+      el.row.classList.toggle('off', !on);
+      el.row.classList.toggle('arm', aud.arm === i);
+      el.cutb.classList.toggle('on', aud.arm === i);
+      el.cutb.title = aud.arm === i ? 'Инструмент включён: протяните по волне кусок, который нужно убрать. Нажмите ещё раз, чтобы выключить'
+        : 'Вырезать кусок звука из этой дорожки: включите и протяните по волне (или тяните с зажатым Shift). Правый щелчок по вырезанному куску возвращает звук';
+      el.inc.innerHTML = on ? '&#xE767;' : '&#xE74F;';
+      el.inc.title = on ? 'Дорожка войдёт в сохранённую копию. Нажмите, чтобы убрать' : 'Дорожка не войдёт в копию. Нажмите, чтобы вернуть';
+    });
+    const n = aud.on.filter(Boolean).length;
+    $('bMix').style.display = n > 1 ? '' : 'none';
+    $('bMix').classList.toggle('on', mixOn);
+    syncLaneNames(); drawLanes(); updateCutState();
+  }
+  $('bMix').onclick = () => { mixOn = !mixOn; store.set('audMix', mixOn); syncLanes(); };
+  function drawLanes() {
+    if (!aud || !aud.els || !aud.els.length || !$('lanes').classList.contains('show')) return;
+    const dpr = window.devicePixelRatio || 1, sel = selOk() && dur() > 0;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent');
+    const win = aud.win || { a: 0, b: dur() }, span = win.b - win.a, data = aud.data;
+    aud.els.forEach((el, i) => {
+      const c = el.canvas, W = Math.round(c.clientWidth * dpr), H = Math.round(c.clientHeight * dpr);
+      if (!W || !H) return;
+      if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+      const g = c.getContext('2d');
+      g.clearRect(0, 0, W, H);
+      if (!(span > 0)) return;
+      const x0 = sel ? Math.round(laneX(inT) * W) : 0, x1 = sel ? Math.round(laneX(outT) * W) : 0;
+      if (sel) { g.fillStyle = '#ffffff1f'; g.fillRect(x0, 0, x1 - x0, H); }
+      const pk = data && data.peaks[i], on = aud.on[i];
+      if (pk && pk.length) {
+        const B = pk.length, mid = H / 2, dspan = data.b - data.a;
+        // the loudest slice fills the lane; a part that is quiet all the way through stays low
+        let top = 40;
+        for (let k = 0; k < B; k++) if (pk[k] > top) top = pk[k];
+        // The numbers may still be for the previous view while the new ones are on their way: each pixel
+        // looks up its own moment of time, so the old picture stretches into place instead of lying.
+        const slice = x => (win.a + x / W * span - data.a) / dspan * B;
+        // two passes, one colour each: the fragment stands out, the rest stays quiet
+        for (const inside of [false, true]) {
+          if (inside && !sel) break;
+          g.fillStyle = !on ? '#ffffff38' : inside ? accent : sel ? '#ffffff66' : '#ffffffb0';
+          for (let x = inside ? Math.max(0, x0) : 0, to = inside ? Math.min(W, x1) : W; x < to; x++) {
+            if (!inside && sel && x >= x0 && x < x1) continue;
+            const f = slice(x), t = slice(x + 1);
+            if (t <= 0 || f >= B) continue;
+            let m = 0;
+            for (let k = Math.max(0, Math.floor(f)), e = Math.min(B, Math.max(k + 1, Math.floor(t))); k < e; k++) if (pk[k] > m) m = pk[k];
+            const h = Math.max(dpr, m / top * (H - 4 * dpr));
+            g.fillRect(x, mid - h / 2, 1, h);
+          }
+        }
+      }
+      for (const r of aud.cuts[i] || []) {   // cut-out pieces: darkened, with a red frame
+        const a = Math.round(laneX(r.a) * W), b = Math.round(laneX(r.b) * W);
+        if (b <= 0 || a >= W) continue;
+        g.fillStyle = '#000000c8'; g.fillRect(a, 0, b - a, H);
+        g.fillStyle = '#ff5f5740'; g.fillRect(a, 0, b - a, H);
+        g.fillStyle = '#ff5f57'; g.fillRect(a, 0, dpr, H); g.fillRect(b - dpr, 0, dpr, H); g.fillRect(a, mid0(H), b - a, dpr);
+      }
+      if (sel) {   // the fragment's edges: grab and drag
+        g.fillStyle = '#fff';
+        for (const x of [x0, x1]) g.fillRect(x - 1.5 * dpr, 0, 3 * dpr, H);
+      }
+    });
+  }
+  new ResizeObserver(drawLanes).observe($('lanes'));
+
   // ---------- cutting ----------
   let hasFfmpeg = true, jobOut = null, pollTimer = null, jobRunning = false, jobLabel = '';
   function updateCutState() {
     const ok = inT !== null && outT !== null && outT > inT;
-    $('warn').textContent = hasFfmpeg ? '' : 'Сохранение недоступно: не найден ffmpeg';
+    const silent = !!(aud && cur && aud.path === cur.path && aud.tracks && aud.tracks.length && !aud.on.some(Boolean));
+    $('warn').textContent = !hasFfmpeg ? 'Сохранение недоступно: не найден ffmpeg' : silent ? 'Все дорожки выключены: копия сохранится без звука' : '';
     $('bCut').disabled = !ok || !hasFfmpeg || !cur || jobRunning;
+  }
+  // which tracks the copy gets: nothing to say when all of them go in as they are
+  function cutAudio() {
+    if (!aud || !cur || aud.path !== cur.path || !aud.tracks || !aud.tracks.length) return {};
+    const idx = aud.on.map((on, i) => on ? i : -1).filter(i => i >= 0);
+    const mix = mixOn && idx.length > 1;
+    const holes = idx.some(i => aud.cuts[i] && aud.cuts[i].length);
+    return idx.length === aud.tracks.length && !mix && !holes ? {} : { audio: idx, mix, cuts: aud.cuts.map(l => l.map(r => [r.a, r.b])) };
   }
   async function cut() {
     if ($('bCut').disabled) return;
     try {
       if (mode() === 'encode') showJob('running', 0, 'Подбираю кодировщик');
-      const r = await N.cut({ path: cur.path, start: inT, end: outT, mode: mode() });
+      const r = await N.cut({ path: cur.path, start: inT, end: outT, mode: mode(), ...cutAudio() });
       jobOut = r.output; jobRunning = true; updateCutState();
       jobLabel = r.encoder ? ` на ${r.encoder}` : '';
       showJob('running', 0, `Сохраняю${jobLabel}: ${baseName(jobOut)}`);
@@ -1142,7 +1720,8 @@
     const j = $('job'); j.className = 'job show ' + state;
     $('jobBar').style.width = pct + '%'; $('jobTxt').textContent = txt; $('jobTxt').title = txt;
     $('bCancel').style.display = state === 'running' ? '' : 'none';
-    $('bReveal').style.display = $('bOpenOut').style.display = state === 'done' ? '' : 'none';
+    $('bReveal').style.display = state === 'done' ? '' : 'none';
+    $('bOpenOut').style.display = state === 'done' && !/\.m4a$/i.test(jobOut || '') ? '' : 'none';   // a sound file isn't something RPp plays
   }
   $('bCut').onclick = cut;
   $('bCancel').onclick = () => N.cancel().catch(e => toast(e.message, true));
@@ -1397,15 +1976,15 @@
 
   // right-click on a library tile
   let ctxFile = null;
-  function hideCtx() { $('ctx').classList.remove('show'); ctxFile = null; }
+  function hideCtx() { $('ctx').classList.remove('show'); ctxFile = null; $('fctx').classList.remove('show'); fctxDir = null; }
   function showCtx(e, file) {
-    e.preventDefault();
+    e.preventDefault(); hideCtx();
     ctxFile = file;
     const m = $('ctx'); m.classList.add('show');
     m.style.left = Math.min(e.clientX, innerWidth - m.offsetWidth - 8) + 'px';
     m.style.top = Math.min(e.clientY, innerHeight - m.offsetHeight - 8) + 'px';
   }
-  document.addEventListener('pointerdown', e => { if (!e.target.closest('#ctx')) hideCtx(); });
+  document.addEventListener('pointerdown', e => { if (!e.target.closest('#ctx, #fctx')) hideCtx(); });
   $('library').addEventListener('scroll', hideCtx);
   $('ctxOpen').onclick = () => { const f = ctxFile; hideCtx(); f && loadFile(f.path); };
   $('ctxFolder').onclick = () => { const f = ctxFile; hideCtx(); f && N.reveal(f.path); };
@@ -1466,7 +2045,7 @@
   $('bFull').onclick = toggleFull;
   $('bBack').onclick = () => showPlayer(false);
   function refreshButton() {
-    if (view === 'folders') return openDir(curDir, true);
+    if (view === 'folders' && !home) return openDir(curDir, true);
     if (!scanning) { scanning = true; scanInfo = null; renderScanline(); N.rescan(); }
   }
   $('bRefresh').onclick = refreshButton;
@@ -1500,7 +2079,7 @@
     e.preventDefault(); dragOff();
     const f = [...e.dataTransfer.files].find(f => /\.(mp4|mkv|mov|flv|ts|webm|m4v)$/i.test(f.name));
     const p = f && N.pathForFile(f);
-    if (p) { curDir = p.replace(/\\[^\\]+$/, ''); loadFile(p); } else if (e.dataTransfer.files.length) toast('Это не видеофайл', true);
+    if (p) openOutside(p); else if (e.dataTransfer.files.length) toast('Это не видеофайл', true);
   });
 
   // ---------- render loop ----------
@@ -1517,6 +2096,7 @@
     if (sel) { $('tRange').style.left = pct(inT); $('tRange').style.width = pct(outT - inT); }
     $('hIn').classList.toggle('show', sel); $('hOut').classList.toggle('show', sel);
     if (sel) { $('hIn').style.left = pct(inT); $('hOut').style.left = pct(outT); }
+    if (aud && aud.els) for (const el of aud.els) el.head.style.left = laneX(t) * 100 + '%';
   }
   // Runs every display frame only while something moves (playback, dragging, seeking); otherwise it sleeps
   // and the video's own events wake it, so an idle or paused RPp costs no CPU.
@@ -1524,12 +2104,13 @@
   function frame() {
     rafOn = false;
     if (loop && inT !== null && outT !== null && outT > inT && !v.paused && v.currentTime >= outT) v.currentTime = inT;
+    previewCuts();
     const c = fmt(v.currentTime, false);
     if (c !== lastCur) { $('tCur').textContent = c; lastCur = c; }
     const inPlayer = document.body.classList.contains('play');
     if (inPlayer) drawTimeline();
     if (!v.paused) drawNav(false);
-    if (inPlayer && (!v.paused || tlDrag || v.seeking)) kick();
+    if (inPlayer && (!v.paused || tlDrag || laneDrag || v.seeking)) kick();
   }
   function kick() { if (!rafOn) { rafOn = true; requestAnimationFrame(frame); } }
   ['play', 'pause', 'seeking', 'seeked', 'timeupdate', 'progress', 'loadedmetadata', 'durationchange', 'emptied', 'ended']
@@ -1546,7 +2127,7 @@
       else if (k === 'Enter') { handled(); doDelete(); }
       return;
     }
-    if (k === 'Escape' && $('ctx').classList.contains('show')) { hideCtx(); return; }
+    if (k === 'Escape' && ($('ctx').classList.contains('show') || $('fctx').classList.contains('show'))) { hideCtx(); return; }
     if ($('fb').classList.contains('show')) {   // typing a message: only Esc and Ctrl+Enter mean something
       if (k === 'Escape' && !fbBusy) showFeedback(null);
       else if (e.ctrlKey && k === 'Enter') { handled(); sendFeedback(); }
@@ -1562,7 +2143,10 @@
       if (t) { handled(); askDelete(t.dataset.path, t._file && t._file.size); }
       return;
     }
-    if (!playing) { if (k === 'Backspace' && view === 'folders' && listing && listing.parent) openDir(listing.parent); return; }
+    if (!playing) {   // Backspace: one folder up, and from the top of a disk to the list of all folders
+      if (k === 'Backspace' && view === 'folders' && !home) listing && listing.parent ? openDir(listing.parent) : openHome();
+      return;
+    }
     if (e.ctrlKey && k === 'Enter') { handled(); cut(); return; }
     if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyTime(v.currentTime, 'Время', $('tCur')); return; }
     if (e.ctrlKey || e.altKey || e.metaKey) { if (e.altKey && k === 'ArrowLeft') showPlayer(false); return; }
@@ -1598,6 +2182,7 @@
         else if ($('menu').classList.contains('show')) closeMenu();
         else if (document.fullscreenElement) document.exitFullscreen();
         else if (performance.now() - fullExitAt < 400) {} // this Esc already left fullscreen
+        else if (aud && aud.arm !== null && $('trim').classList.contains('show')) { aud.arm = null; syncLanes(); }
         else if ($('trim').classList.contains('show')) showTrim(false);
         else showPlayer(false);
         break;
@@ -1607,12 +2192,14 @@
   document.addEventListener('click', e => { const b = e.target.closest('button'); if (b) b.blur(); });
 
   // ---------- native integration & init ----------
+  // a file picked in a dialog, dropped on the window or opened from Explorer: the library follows it to its folder
+  function openOutside(p) { curDir = dirOf(p); setHome(false); loadFile(p); }
   async function openFileDialog() {
     const p = await N.openDialog();
-    if (p) { curDir = p.replace(/\\[^\\]+$/, ''); loadFile(p); }
+    if (p) openOutside(p);
   }
   $('bOpen').onclick = openFileDialog;
-  N.onOpenFile(p => { curDir = p.replace(/\\[^\\]+$/, ''); loadFile(p); });
+  N.onOpenFile(openOutside);
 
   // ---------- updates (main process checks GitHub and pushes the result here) ----------
   let upd = null, updBusy = false;
@@ -1663,20 +2250,17 @@
 
   (async () => {
     await baseReady;
-    N.info().then(i => {
-      hasFfmpeg = !!i.ffmpeg; $('ver').textContent = 'RPp ' + i.version;
-      if (i.accent) applyAccent(i.accent);
-      updateCutState();
-    });
+    const i = await N.info();
+    hasFfmpeg = !!i.ffmpeg; $('ver').textContent = 'RPp ' + i.version;
+    if (i.accent) applyAccent(i.accent);
+    if (!pins) { pins = i.videos ? [i.videos] : []; store.set('pins', pins); }   // first run: the Videos folder is pinned
     document.body.classList.toggle('all', view === 'all');
     for (const b of $('pivot').children) b.classList.toggle('on', b.dataset.view === view);
     const startFile = await N.initialFile();
-    if (startFile) { curDir = startFile.replace(/\\[^\\]+$/, ''); store.set('dir', curDir); loadFile(startFile); }
-    else { curDir = store.get('dir', null); setView(view); }
-    N.media().then(r => {
-      media = r.media; scanning = scanning || r.scanning;
-      if (view === 'all' && !document.body.classList.contains('play')) renderAll();
-    }, () => {});
+    curDir = store.get('dir', null);
+    if (startFile) openOutside(startFile);
+    else { setHome(store.get('home', !curDir)); setView(view); }   // nothing opened yet: start from the list of folders
+    N.media().then(r => { media = r.media; scanning = scanning || r.scanning; mediaChanged(); }, () => {});
     updateCutState();
     N.getUpdate().then(onUpdate, () => {}); // in case the check finished before the page loaded
   })();

@@ -14,11 +14,12 @@ const { spawn } = require('child_process');
 // as a stream, so a Cyrillic character split between two chunks stays intact.
 const kids = new Set();
 function run(cmd, args, opts) {
-  const p = spawn(cmd, args, { windowsHide: true, ...opts });
+  const { binary, ...rest } = opts || {};   // binary: stdout carries raw bytes (audio samples), not text
+  const p = spawn(cmd, args, { windowsHide: true, ...rest });
   kids.add(p);
   const done = () => kids.delete(p);
   p.on('close', done); p.on('error', done);
-  if (p.stdout) p.stdout.setEncoding('utf8');
+  if (p.stdout && !binary) p.stdout.setEncoding('utf8');
   if (p.stderr) p.stderr.setEncoding('utf8');
   if (p.stdin) p.stdin.on('error', () => {});   // the process may exit before reading its input
   return p;
@@ -86,7 +87,9 @@ async function fetchLatestRelease() {
 // ---------- complaints and suggestions ----------
 // Sent to the author's server, which keeps them and forwards them to his Telegram.
 // The server has its own self-signed certificate; trusting only it means nobody can sit in between.
-const FEEDBACK_URL = 'https://148.253.209.182:8097/feedback';
+// The server's address has changed once already, and the certificate still names the old one. That check
+// adds nothing here: the only certificate trusted is this one, so the answer comes from whoever holds its key.
+const FEEDBACK_URL = 'https://177.177.230.73:8097/feedback';
 const FEEDBACK_CERT = `-----BEGIN CERTIFICATE-----
 MIIBlTCCATqgAwIBAgIUANrIvn0knyhkQBLfg9WUFPi37zMwCgYIKoZIzj0EAwIw
 FzEVMBMGA1UEAwwMUlBwIGZlZWRiYWNrMB4XDTI2MTAxODIyMTM1MVoXDTM2MTAx
@@ -105,7 +108,7 @@ function sendFeedback({ kind, text, contact, withSystem }) {
   });
   return new Promise((resolve, reject) => {
     const req = https.request(FEEDBACK_URL, {
-      method: 'POST', ca: FEEDBACK_CERT, timeout: 15000,
+      method: 'POST', ca: FEEDBACK_CERT, checkServerIdentity: () => undefined, timeout: 15000,
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body), 'User-Agent': 'RPp' },
     }, res => {
       let data = '';
@@ -231,26 +234,81 @@ function init() {
     const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = Math.floor(t % 60);
     return [h, m, s].map(x => String(x).padStart(2, '0')).join('-');
   }
-  async function startCut({ path: src, start, end, mode }) {
+  // Where a stream copy cut at `t` really begins: the time of the key frame at or before it (null = unknown).
+  function keyFrameBefore(src, t) {
+    return new Promise(resolve => {
+      const pr = run(ffmpegPath, ['-hide_banner', '-copyts', '-ss', t.toFixed(3), '-i', src, '-map', '0:v:0', '-c', 'copy', '-frames:v', '1', '-f', 'framecrc', '-']);
+      let out = '', err = '';
+      const timer = setTimeout(() => pr.kill(), 10000);
+      pr.stdout.on('data', d => { out += d; });
+      pr.stderr.on('data', d => { err += d; });
+      pr.on('error', () => { clearTimeout(timer); resolve(null); });
+      pr.on('close', () => {
+        clearTimeout(timer);
+        const tb = /^#tb 0: (\d+)\/(\d+)/m.exec(out), pkt = /^0,\s*-?\d+,\s*(-?\d+),/m.exec(out);
+        const origin = /Duration: [^,]+, start: (-?\d+(?:\.\d+)?)/.exec(err);   // -ss counts from the file's own start time
+        if (!tb || !pkt) return resolve(null);
+        const key = pkt[1] * tb[1] / tb[2] - (origin ? +origin[1] : 0);
+        resolve(key >= 0 && key <= t && t - key < 60 ? key : null);
+      });
+    });
+  }
+  async function startCut({ path: src, start, end, mode, audio, mix, cuts }) {
     if (job && job.state === 'running') throw new Error('Уже идёт вырезание');
     if (!isVideo(src) || !fs.existsSync(src)) throw new Error('Файл не найден: ' + src);
     start = Number(start); end = Number(end);
     if (!(end > start)) throw new Error('Конец должен быть позже начала');
+    const soundOnly = mode === 'audio';   // save just the sound of the fragment
     const encode = mode === 'encode';
     const enc = encode ? await pickEncoder() : null;
 
     const dir = path.dirname(src);
     const base = path.basename(src, path.extname(src));
-    const ext = encode ? '.mp4' : path.extname(src);
-    const name = `${base} cut ${stamp(start)} - ${stamp(end)}`;
+    const ext = soundOnly ? '.m4a' : encode ? '.mp4' : path.extname(src);
+    const name = `${base} ${soundOnly ? 'sound' : 'cut'} ${stamp(start)} - ${stamp(end)}`;
     let out = path.join(dir, name + ext);
     for (let k = 2; fs.existsSync(out); k++) out = path.join(dir, `${name} (${k})${ext}`);
 
-    const duration = end - start;
-    const args = ['-hide_banner', '-nostats', '-y', '-ss', start.toFixed(3), '-i', src, '-t', duration.toFixed(3)];
-    if (encode) args.push('-map', '0:v:0', '-map', '0:a?', ...enc.args, '-c:a', 'aac', '-b:a', '192k');
-    else args.push('-map', '0:v?', '-map', '0:a?', '-c', 'copy', '-avoid_negative_ts', 'make_zero');
-    if (/\.(mp4|mov|m4v)$/i.test(out)) args.push('-movflags', '+faststart');
+    // audio: which sound tracks go into the clip (null = all of them, [] = none);
+    // mix: blend the chosen tracks into one, for players and messengers that only play the first track;
+    // cuts[i]: the parts of track i, as [from, to] in seconds of the recording, that are silenced
+    let tracks = Array.isArray(audio) ? [...new Set(audio.map(Number).filter(i => Number.isInteger(i) && i >= 0 && i < 32))] : null;
+    if (soundOnly && !tracks) tracks = (await audioInfo(src)).tracks.map((_, i) => i);
+    if (soundOnly && !tracks.length) throw new Error('Нечего сохранять: в этом видео нет звука или все дорожки выключены');
+    const mixed = !!mix && tracks && tracks.length > 1;
+    const holes = i => (Array.isArray(cuts) && Array.isArray(cuts[i]) ? cuts[i] : []).slice(0, 200)
+      .map(r => [Math.max(start, Number(r && r[0])), Math.min(end, Number(r && r[1]))]).filter(r => r[1] > r[0]);
+    const filtered = !!tracks && (mixed || tracks.some(i => holes(i).length));
+    // A copied picture starts at the key frame before the chosen moment. Sound that goes through a filter is
+    // decoded, and ffmpeg would start it exactly at the moment, leaving those first seconds silent and the
+    // sound shorter than the picture. So both start at that key frame.
+    let t0 = start;
+    if (filtered && !encode && !soundOnly) {
+      const key = await keyFrameBefore(src, start);
+      if (key !== null) t0 = key + 0.001;
+    }
+    const duration = end - t0;
+    const args = ['-hide_banner', '-nostats', '-y', '-ss', t0.toFixed(3), '-i', src, '-t', duration.toFixed(3)];
+    const aCodec = ext.toLowerCase() === '.webm' ? ['-c:a', 'libopus', '-b:a', '160k'] : ['-c:a', 'aac', '-b:a', '192k'];
+    if (!soundOnly) args.push('-map', encode ? '0:v:0' : '0:v?');
+    if (filtered) {
+      const graph = [];
+      const ins = tracks.map(i => {
+        const h = holes(i);
+        if (!h.length) return `0:a:${i}`;
+        graph.push(`[0:a:${i}]volume=0:enable='${h.map(r => `between(t,${(r[0] - t0).toFixed(3)},${(r[1] - t0).toFixed(3)})`).join('+')}'[c${i}]`);
+        return `[c${i}]`;
+      });
+      if (mixed) graph.push(ins.map(l => (l[0] === '[' ? l : `[${l}]`)).join('') + `amix=inputs=${tracks.length}:normalize=0:dropout_transition=0[mix]`);
+      args.push('-filter_complex', graph.join(';'));
+      if (mixed) args.push('-map', '[mix]'); else ins.forEach(l => args.push('-map', l));
+    } else if (tracks) tracks.forEach(i => args.push('-map', `0:a:${i}`));
+    else args.push('-map', '0:a?');
+    if (soundOnly) args.push('-vn', ...aCodec);
+    else if (encode) args.push(...enc.args, ...aCodec);
+    else if (filtered) args.push('-c:v', 'copy', ...aCodec, '-avoid_negative_ts', 'make_zero');   // the picture is still copied as is
+    else args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero');
+    if (/\.(mp4|mov|m4v|m4a)$/i.test(out)) args.push('-movflags', '+faststart');
     args.push('-progress', 'pipe:1', out);
 
     const proc = run(ffmpegPath, args);
@@ -274,6 +332,123 @@ function init() {
     if (state === 'done') return { state, percent: 100, output: out, encoder };
     if (state === 'error') return { state, error: job.log.trim().split(/\r?\n/).slice(-6).join('\n') };
     return { state };
+  }
+
+  // ---------- sound tracks: what a file has, and a waveform of each for the trim panel ----------
+  // OBS can record several tracks (game, microphone, voice chat). One ffmpeg pass reads only the audio,
+  // squeezes every track to mono 8 kHz and sends them interleaved; the loudness of each slice
+  // of the timeline is kept. Whole-file results are cached in userData/waves.
+  const waveDir = path.join(app.getPath('userData'), 'waves');
+  const WAVE_RATE = 8000, WAVE_POINTS = 2000, MAX_TRACKS = 8;
+  let wave = null;
+  function probeAudio(src) {
+    return new Promise(resolve => {
+      const pr = run(ffmpegPath, ['-hide_banner', '-i', src]);
+      let log = '';
+      pr.stderr.on('data', d => { log += d; });
+      pr.on('error', () => resolve({ duration: 0, tracks: [] }));
+      pr.on('close', () => {
+        const m = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(log);
+        const tracks = [];
+        let t = null;
+        for (const line of log.split(/\r?\n/)) {
+          const s = /^\s*Stream #0:\d+(?:\[[^\]]*\])?(?:\(([^)]*)\))?: (\w+): (.*)$/.exec(line);
+          if (s) {
+            t = null;
+            if (s[2] !== 'Audio') continue;
+            const parts = s[3].split(', '), hz = parts.findIndex(x => / Hz$/.test(x));
+            t = { codec: parts[0].split(' ')[0], layout: hz >= 0 && parts[hz + 1] ? parts[hz + 1].replace(/\(.*\)/, '') : '',
+              lang: s[1] && s[1] !== 'und' ? s[1] : '', title: '' };
+            tracks.push(t);
+            continue;
+          }
+          // MP4 keeps a track's name as its "handler"; the default ones ("OBS Audio Handler", "SoundHandler") say nothing
+          const meta = t && /^\s+(title|handler_name)\s*:\s*(.+?)\s*$/.exec(line);
+          if (meta && (meta[1] === 'title' || (!t.title && !/handler$/i.test(meta[2])))) t.title = meta[2].slice(0, 60);
+        }
+        resolve({ duration: m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : 0, tracks });
+      });
+    });
+  }
+  let audioMeta = null;   // the last probed file: { key, src, duration, tracks }
+  async function audioInfo(src) {
+    const st = await fsp.stat(src);
+    const key = crypto.createHash('sha1').update(`${src}|${st.size}|${st.mtimeMs}`).digest('hex');
+    if (!audioMeta || audioMeta.key !== key) audioMeta = { key, src, ...(await probeAudio(src)) };
+    return audioMeta;
+  }
+  function stopWave() {
+    if (wave && wave.state === 'running') { wave.state = 'cancelled'; wave.proc.kill(); }
+  }
+  // The waveform of the part [a, b] of a file, in seconds. The page asks for the whole file or, on long
+  // recordings, for the surroundings of the fragment being cut (then ffmpeg seeks and answers at once).
+  async function startWave(src, a, b) {
+    const { key, duration, tracks } = await audioInfo(src);
+    stopWave();
+    const n = Math.min(tracks.length, MAX_TRACKS);
+    a = Math.max(0, Number(a) || 0); b = Math.min(duration, Number(b) || duration);
+    const w = wave = { src, a, b, state: 'none', percent: 0, peaks: [] };
+    if (!n || !(b - a > 0.05)) return;
+    // only the long job is worth keeping: the whole of a recording longer than a couple of minutes
+    const full = a === 0 && b >= duration - 0.05 && duration > 120;
+    const file = path.join(waveDir, key + '.json');
+    if (full) {
+      try {
+        const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (saved.v === 2 && saved.peaks.length === n) {
+          w.peaks = saved.peaks; w.state = 'done'; w.percent = 100;
+          const now = new Date(); fs.utimes(file, now, now, () => {});
+          return;
+        }
+      } catch { /* not cached yet */ }
+    }
+    const total = (b - a) * WAVE_RATE, per = Math.max(1, total / WAVE_POINTS);
+    const sum = Array.from({ length: n }, () => new Float64Array(WAVE_POINTS)), cnt = new Uint32Array(WAVE_POINTS);
+    let graph = Array.from({ length: n }, (_, i) => `[0:a:${i}]aresample=${WAVE_RATE},aformat=sample_fmts=s16:channel_layouts=mono[a${i}]`).join(';');
+    if (n > 1) graph += ';' + Array.from({ length: n }, (_, i) => `[a${i}]`).join('') + `amerge=inputs=${n}[o]`;
+    // -vn before -i: the picture isn't even read from disk, so a 40 GB recording takes seconds, not minutes
+    const proc = run(ffmpegPath, ['-hide_banner', '-nostats', '-v', 'error', '-vn', '-sn', '-dn', '-ss', a.toFixed(3), '-t', (b - a).toFixed(3), '-i', src,
+      '-filter_complex', graph, '-map', n > 1 ? '[o]' : '[a0]', '-c:a', 'pcm_s16le', '-f', 's16le', 'pipe:1'], { binary: true });
+    w.proc = proc; w.state = 'running';
+    const size = 2 * n;
+    let rest = null, frame = 0;
+    // Loudness of each slice (the average, not the loudest sample: over several seconds a peak is always
+    // "loud" and the picture turns into a solid bar), on a square-root scale so quiet speech stays visible.
+    const publish = () => {
+      w.peaks = sum.map(s => Array.from(s, (x, i) => cnt[i] ? Math.min(255, Math.round(255 * Math.sqrt(x / cnt[i] / 32768))) : 0));
+    };
+    proc.stdout.on('data', d => {
+      if (rest) { d = Buffer.concat([rest, d]); rest = null; }
+      const whole = d.length - d.length % size;
+      for (let o = 0; o < whole; frame++) {
+        const k = Math.min(WAVE_POINTS - 1, Math.floor(frame / per));
+        cnt[k]++;
+        for (let c = 0; c < n; c++, o += 2) sum[c][k] += Math.abs(d.readInt16LE(o));
+      }
+      if (whole < d.length) rest = d.subarray(whole);
+      w.percent = Math.min(99, frame / total * 100);
+    });
+    const timer = setInterval(publish, 400);   // the page polls: give it a fresh copy a few times a second
+    proc.on('error', () => { clearInterval(timer); if (w.state === 'running') w.state = 'error'; });
+    proc.on('close', code => {
+      clearInterval(timer);
+      if (w.state !== 'running') return;
+      publish();
+      // code 0, or ffmpeg gave up on a damaged tail after most of the part was read
+      if (code === 0 || frame > total * 0.5) {
+        w.state = 'done'; w.percent = 100;
+        if (full) fsp.mkdir(waveDir, { recursive: true }).then(() => fsp.writeFile(file, JSON.stringify({ v: 2, peaks: w.peaks }))).catch(() => {});
+      } else w.state = 'error';
+    });
+  }
+  function cleanWaves() {   // waveforms nobody has opened for a month
+    fs.readdir(waveDir, (e, names) => {
+      if (e) return;
+      for (const nm of names) {
+        const f = path.join(waveDir, nm);
+        fs.stat(f, (e2, st) => { if (!e2 && Date.now() - st.mtimeMs > 30 * 864e5) fs.rm(f, { force: true }, () => {}); });
+      }
+    });
   }
 
   // ---------- library thumbnails (one ffmpeg call gives a frame and the duration) ----------
@@ -523,7 +698,27 @@ function init() {
 
   // ---------- IPC ----------
   ipcMain.handle('base', async () => { await serverReady; return videoBase; });
-  ipcMain.handle('info', () => ({ ffmpeg: ffmpegPath === 'ffmpeg' ? null : ffmpegPath, version: app.getVersion(), accent: accentColor() }));
+  ipcMain.handle('info', () => ({ ffmpeg: ffmpegPath === 'ffmpeg' ? null : ffmpegPath, version: app.getVersion(), accent: accentColor(), videos: app.getPath('videos') }));
+  ipcMain.handle('audio', async (_, p) => {
+    if (!isVideo(p)) return { tracks: [], duration: 0 };
+    const { tracks, duration } = await audioInfo(p);
+    return { tracks, duration };
+  });
+  ipcMain.handle('wave-start', (_, p, a, b) => (isVideo(p) ? startWave(p, a, b) : null));
+  ipcMain.handle('wave', (_, p) => (wave && wave.src === p
+    ? { state: wave.state, percent: Math.round(wave.percent), peaks: wave.peaks, a: wave.a, b: wave.b } : { state: 'none', percent: 0, peaks: [] }));
+  ipcMain.handle('pick-folder', async (_, from) => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Выберите папку с видео',
+      defaultPath: typeof from === 'string' && from ? from : app.getPath('videos'),
+      properties: ['openDirectory'],
+    });
+    return r.canceled ? null : r.filePaths[0];
+  });
+  ipcMain.handle('open-folder', async (_, p) => {
+    if (typeof p !== 'string' || !p) return;
+    try { if ((await fsp.stat(p)).isDirectory()) shell.openPath(p); } catch { }
+  });
   ipcMain.handle('thumb', (_, p) => (isVideo(p) ? getThumb(p) : null));
   ipcMain.handle('chrome-mode', (_, mode) => {
     if (!win) return;
@@ -653,6 +848,7 @@ function init() {
     if (!isVideo(p) || !fs.existsSync(p)) throw new Error('Файл не найден');
     // a copy for viewing may still be reading this file
     if (conv && conv.state === 'running' && conv.src === p) { conv.state = 'cancelled'; conv.proc.kill(); }
+    if (wave && wave.src === p) stopWave();
     for (let i = 0; ; i++) {
       try { await shell.trashItem(p); break; }
       catch (e) {
@@ -713,7 +909,8 @@ function init() {
       icon: path.join(__dirname, 'icon.ico'),
       titleBarStyle: 'hidden',
       titleBarOverlay: { color: '#202020', symbolColor: '#ffffff', height: 32 },
-      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, spellcheck: false },
+      // AudioVideoTracks: lets the page switch which sound track of a recording is heard
+      webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, spellcheck: false, enableBlinkFeatures: 'AudioVideoTracks' },
     });
     if (s.maximized) win.maximize();
     win.once('ready-to-show', () => win.show());
@@ -793,6 +990,7 @@ function init() {
     setTimeout(cleanPlayable, 10000);
     setTimeout(pruneThumbs, 30000);
     setTimeout(cleanUpdates, 60000);
+    setTimeout(cleanWaves, 45000);
     if (fs.existsSync(ffmpegPath) || ffmpegPath === 'ffmpeg') setTimeout(pickEncoder, 3000);
   });
 
