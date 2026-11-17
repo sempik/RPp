@@ -842,6 +842,45 @@ function init() {
   }
   ipcMain.handle('ocr', (_, dataUrl) => ocr(dataUrl));
 
+  // ---------- screenshot of the frame ----------
+  // The page hands over a ready PNG of the frame (full resolution of the video, not of the window).
+  // It is saved to Pictures\RPp as "<video name> <h-mm-ss.mmm>.png". The page itself puts the picture on
+  // the clipboard (this Electron's main-process clipboard has no writeImage()).
+  // resolved on use: Pictures may sit on an unplugged drive, and that must not stop the app from starting
+  const shotsDir = () => {
+    for (const k of ['pictures', 'videos', 'home']) { try { return path.join(app.getPath(k), 'RPp'); } catch { } }
+    return path.join(os.homedir(), 'RPp');
+  };
+  const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  async function saveShot(bytes, src, t) {
+    const buf = Buffer.from(bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes || []);
+    if (buf.length < 64 || buf.length > 200 * 2 ** 20 || !buf.subarray(0, 8).equals(PNG_SIG)) throw new Error('Нет кадра');
+    t = Math.max(0, Number(t) || 0);
+    const ms = Math.round(t * 1000), p2 = n => String(n).padStart(2, '0');
+    const stamp = `${Math.floor(ms / 3600e3)}-${p2(Math.floor(ms / 60e3) % 60)}-${p2(Math.floor(ms / 1000) % 60)}.${String(ms % 1000).padStart(3, '0')}`;
+    // the video's own name, minus anything Windows won't take in a file name
+    const base = (typeof src === 'string' ? path.basename(src, path.extname(src)) : '')
+      .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/[. ]+$/, '').slice(0, 120) || 'RPp';
+    const shotDir = shotsDir();
+    try { await fsp.mkdir(shotDir, { recursive: true }); }
+    catch (e) { throw new Error('Не удалось создать папку «' + shotDir + '»: ' + e.message); }
+    let file;
+    for (let i = 1; ; i++) {
+      file = path.join(shotDir, `${base} ${stamp}${i > 1 ? ` (${i})` : ''}.png`);
+      try { await fsp.writeFile(file, buf, { flag: 'wx' }); break; }   // never overwrite an earlier shot
+      catch (e) {
+        if (e.code !== 'EEXIST' || i >= 999) throw new Error('Не удалось сохранить скриншот в папку «' + shotDir + '»: ' + e.message);
+      }
+    }
+    return { path: file, name: path.basename(file) };
+  }
+  ipcMain.handle('shot', (_, bytes, src, t) => saveShot(bytes, src, t));
+  ipcMain.handle('open-shots', async () => {
+    const shotDir = shotsDir();
+    await fsp.mkdir(shotDir, { recursive: true });
+    shell.openPath(shotDir);
+  });
+
   // Delete = move to the Windows Recycle Bin. The player releases the file first; Windows may still hold it
   // for a moment (our video server, a thumbnail being made), so retry briefly.
   ipcMain.handle('trash', async (_, p) => {

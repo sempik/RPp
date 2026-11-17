@@ -221,6 +221,10 @@
     background: #0000009c; display: grid; place-items: center; font-size: 26px; opacity: 0; pointer-events: none;
   }
   .flash.go { animation: flash .45s ease-out; }
+  .shotfx { position: absolute; inset: 0; z-index: 5; background: #fff; opacity: 0; pointer-events: none; }
+  .shotfx.go { animation: shotfx .28s ease-out; }
+  @keyframes shotfx { from { opacity: .35; } to { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .shotfx.go { animation: none; } }
   @keyframes flash { from { opacity: 1; transform: scale(.85); } to { opacity: 0; transform: scale(1.2); } }
 
   /* bottom transport (acrylic, auto-hides) */
@@ -335,7 +339,10 @@
   .lane-none { margin: 0 78px; padding: 6px 10px; border-radius: 4px; background: #00000073; color: var(--text-2); font-size: 12px; }
 
   /* "more" menu */
-  .menu { position: absolute; right: 24px; bottom: 76px; width: 300px; padding: 4px; display: none; z-index: 20; }
+  .menu { position: absolute; right: 24px; bottom: 76px; width: 300px; padding: 4px; display: none; z-index: 20;
+    max-height: calc(100vh - 116px); overflow-y: auto; }   /* a low window: scroll rather than slide under the title bar */
+  .menu::-webkit-scrollbar { width: 6px; }
+  .menu::-webkit-scrollbar-thumb { background: #ffffff40; border-radius: 3px; }
   .menu.show { display: block; animation: rise .15s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
   .mi { display: flex; align-items: center; gap: 12px; width: 100%; height: 36px; padding: 0 12px; border: 0; border-radius: 4px; background: none; text-align: left; cursor: pointer; }
@@ -439,6 +446,7 @@
     <div class="zoomchip"><span id="zoomVal">100%</span><button class="ic" id="bZOut" title="Уменьшить (−)">&#xE71F;</button><button class="ic" id="bZIn2" title="Увеличить (+)">&#xE8A3;</button><button class="ic" id="bZReset" title="Исходный размер (0)">&#xE711;</button></div>
     <canvas class="nav" id="nav"></canvas>
     <div class="flash ic" id="flash">&#xE768;</div>
+    <div class="shotfx" id="shotfx"></div>
   </div>
 
   <div class="chrome" id="chrome">
@@ -500,6 +508,7 @@
         <button class="ib ic" id="bFwd30" title="Вперёд на 30 с (L)">&#xED3D;</button>
       </div>
       <div class="grp r">
+        <button class="ib ic" id="bShot" title="Скриншот кадра: сохранить и скопировать (S). С Shift — только увеличенная часть">&#xE722;</button>
         <button class="ib ic" id="bOcr" title="Текст с кадра: скопировать надписи (C)">&#xE8D2;</button>
         <button class="ib ic" id="bTrim" title="Обрезать (T)">&#xE8C6;</button>
         <button class="ib ic" id="bZIn" title="Увеличить (+ или колесо мыши)">&#xE8A3;</button>
@@ -516,6 +525,9 @@
       <button class="mi" id="miPrev"><span class="ic">&#xE892;</span>Предыдущий кадр<span class="k">,</span></button>
       <button class="mi" id="miNext"><span class="ic">&#xE893;</span>Следующий кадр<span class="k">.</span></button>
       <button class="mi" id="miCopy"><span class="ic">&#xE8C8;</span>Скопировать текущее время<span class="k">Ctrl+C</span></button>
+      <div class="msep"></div>
+      <button class="mi" id="miShot"><span class="ic">&#xE722;</span>Скриншот кадра<span class="k">S</span></button>
+      <button class="mi" id="miShots"><span class="ic">&#xE8B9;</span>Папка со скриншотами</button>
       <div class="msep"></div>
       <button class="mi" id="miPixel"><span class="ic">&#xE8B3;</span>Чёткие пиксели при увеличении<span class="chk ic">&#xE73E;</span></button>
       <button class="mi" id="miFolder"><span class="ic">&#xE838;</span>Открыть папку с файлом</button>
@@ -546,6 +558,7 @@
       <span><kbd>Ctrl</kbd>+<kbd>C</kbd></span><span>Скопировать текущее время</span>
       <span><kbd>F</kbd></span><span>Во весь экран и выход из него</span>
       <span><kbd>Esc</kbd> <kbd>Backspace</kbd></span><span>Вернуться в библиотеку</span>
+      <span><kbd>S</kbd></span><span>Скриншот кадра, с Shift — только увеличенная часть</span>
       <span><kbd>C</kbd></span><span>Текст с кадра: скопировать надписи</span>
       <span><kbd>Del</kbd></span><span>Удалить видео в корзину</span>
       <span><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span>Открыть файл</span>
@@ -1915,6 +1928,51 @@
   ['play', 'seeking', 'emptied'].forEach(ev => v.addEventListener(ev, ocrStale));
   new ResizeObserver(ocrStale).observe(stage);
 
+  // ---------- screenshot of the frame ----------
+  // The frame is taken at the video's own resolution (not the window's), the moment the key is pressed,
+  // so it works during playback too. Saved to Pictures\RPp and copied to the clipboard.
+  // viewOnly: just the part visible while zoomed in.
+  // Every press grabs its frame at once; encoding and saving go one after another, so quick presses
+  // lose nothing and the clipboard ends up with the latest shot.
+  let shotQ = Promise.resolve(), shotsPending = 0;
+  function takeShot(viewOnly) {
+    closeMenu();
+    if (!cur) return;
+    if (!v.videoWidth || v.readyState < 2) { toast('Кадр ещё не загрузился', true); return; }
+    if (shotsPending >= 5) { toast('Предыдущие скриншоты ещё сохраняются', true); return; }
+    let c;
+    try {
+      const full = { sx: 0, sy: 0, sw: v.videoWidth, sh: v.videoHeight };
+      const src = viewOnly && Z.s > 1.001 ? visibleSource() : full;
+      const sx = Math.floor(src.sx), sy = Math.floor(src.sy);
+      const sw = Math.min(v.videoWidth - sx, Math.ceil(src.sx + src.sw) - sx), sh = Math.min(v.videoHeight - sy, Math.ceil(src.sy + src.sh) - sy);
+      if (sw < 2 || sh < 2) throw new Error('Нет кадра');
+      c = document.createElement('canvas');
+      c.width = sw; c.height = sh;
+      c.getContext('2d').drawImage(v, sx, sy, sw, sh, 0, 0, sw, sh);
+    } catch (e) { toast('Скриншот не получился: ' + e.message, true); return; }
+    const t = v.currentTime, file = cur.path;
+    const fx = $('shotfx'); fx.classList.remove('go'); void fx.offsetWidth; fx.classList.add('go');
+    shotsPending++;
+    shotQ = shotQ.then(() => saveShot(c, t, file)).finally(() => { shotsPending--; });
+  }
+  async function saveShot(c, t, file) {
+    let copy = null;
+    try {
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      if (!blob) throw new Error('Не удалось снять кадр');
+      // to the clipboard as well, so it can be pasted into a chat or a forum post right away
+      copy = navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]).then(() => true, () => false);
+      const res = await N.shot(new Uint8Array(await blob.arrayBuffer()), file, t);
+      toast((await copy ? 'Скриншот сохранён и скопирован: ' : 'Скриншот сохранён: ') + res.name);
+    } catch (e) {
+      toast((copy && await copy ? 'Скриншот скопирован в буфер, но не сохранён в файл: ' : 'Скриншот не получился: ') + e.message, true);
+    }
+  }
+  $('bShot').onclick = e => takeShot(e.shiftKey);
+  $('miShot').onclick = () => takeShot(false);
+  $('miShots').onclick = () => { closeMenu(); N.openShots().catch(e => toast(e.message, true)); };
+
   // ---------- menu, dialogs, fullscreen ----------
   function closeMenu() { $('menu').classList.remove('show'); }
   $('bMore').onclick = e => { e.stopPropagation(); $('menu').classList.toggle('show'); wake(); };
@@ -2176,6 +2234,7 @@
       case 'Backspace': handled(); showPlayer(false); break;
       case 'Delete': handled(); cur && askDelete(cur.path); break;
       case 'KeyC': handled(); readText(); break;
+      case 'KeyS': handled(); if (!e.repeat) takeShot(e.shiftKey); break;
       case 'Escape': // menu → trim → fullscreen → library, one layer per press
         handled();
         if (ocrOn) closeOcr();

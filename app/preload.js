@@ -18,6 +18,8 @@ contextBridge.exposeInMainWorld('native', {
   initialFile: () => call('initial-file'),
   trash: p => call('trash', p),
   ocr: png => call('ocr', png),
+  shot: (png, src, t) => call('shot', png, src, t),
+  openShots: () => call('open-shots'),
   feedback: m => call('feedback', m),
   probe: p => call('probe', p),
   playable: (p, mode) => call('playable', p, mode),
