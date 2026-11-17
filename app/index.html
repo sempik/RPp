@@ -94,8 +94,13 @@
   .tile { display: block; width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; border-radius: 6px; }
   .tile .thumb {
     position: relative; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--layer);
-    box-shadow: 0 0 0 1px #ffffff0d; transition: box-shadow .12s;
+    box-shadow: 0 0 0 1px #ffffff0d; transition: box-shadow .12s, transform .18s cubic-bezier(.2, .8, .2, 1);
   }
+  /* a video or photo under the cursor lifts a little above its neighbours */
+  .tile:not(.folder):not(.addfolder):hover .thumb, .tile.previewing .thumb { transform: scale(1.07); z-index: 2; }
+  .tile:not(.folder):not(.addfolder):hover .thumb { box-shadow: 0 0 0 2px var(--ring, var(--text-2)), 0 12px 28px #000000b0; }
+  .tile.current { --ring: var(--accent); }
+  .tile:not(.folder):not(.addfolder):hover .name, .tile:not(.folder):not(.addfolder):hover .sub { position: relative; z-index: 3; }   /* above the shadow */
   .tile .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; opacity: 0; transition: opacity .25s; }
   .tile .thumb img.ready { opacity: 1; }
   .tile .thumb .ph { position: absolute; inset: 0; display: grid; place-items: center; font-size: 34px; color: #ffffff30; }
@@ -197,8 +202,14 @@
   .ocr-bar .ib { width: 32px; height: 32px; font-size: 12px; }
   .stage.zoomed { cursor: grab; }
   .stage.panning { cursor: grabbing; }
-  .stage video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; will-change: transform; }
-  body.pixel .stage video { image-rendering: pixelated; }
+  .stage video, .stage img.pic { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: 0 0; will-change: transform; }
+  body.pixel .stage video, body.pixel .stage img.pic { image-rendering: pixelated; }
+  /* a photo is open instead of a video: its own picture and controls (.ponly), the video ones (.vonly) are hidden */
+  .stage img.pic { display: none; user-select: none; -webkit-user-drag: none; }
+  body.pic .stage img.pic { display: block; }
+  body.pic .stage video { display: none; }
+  body.pic .vonly, body:not(.pic) .ponly { display: none !important; }
+  .piccount { padding: 0 8px; font-size: 13px; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .stage.drag::after {
     content: "Отпустите, чтобы открыть"; position: absolute; inset: 16px; border: 2px dashed var(--accent); border-radius: 8px;
     display: flex; align-items: center; justify-content: center; background: #00000080; font: 600 20px var(--display);
@@ -440,6 +451,7 @@
 <section class="player" id="player">
   <div class="stage" id="stage">
     <video id="v" preload="auto" playsinline crossorigin="anonymous"></video>
+    <img class="pic" id="pic" alt="" crossorigin="anonymous" draggable="false">
     <div class="ocr" id="ocr"></div>
     <div class="ocr-bar acrylic" id="ocrBar"><span id="ocrInfo"></span><button class="btn" id="bOcrAll">Копировать всё</button><button class="ib ic" id="bOcrX" title="Закрыть (Esc)">&#xE711;</button></div>
     <div class="stage-msg acrylic" id="stageMsg"><span class="ic" id="stageIc"></span><div><b id="stageTitle"></b><span id="stageText"></span><div class="upd-bar" id="stageBar"><i></i></div><div class="stage-acts" id="stageActs"></div></div></div>
@@ -485,7 +497,7 @@
     </div>
     <div class="lanes" id="lanes"></div>
 
-    <div class="seekrow">
+    <div class="seekrow vonly">
       <button class="time" id="tCur" title="Скопировать текущее время (Ctrl+C)">0:00:00</button>
       <div class="seek" id="tl">
         <div class="rail"><div class="buf" id="tBuf"></div><div class="sel" id="tRange"></div><div class="fill" id="tPlayed"></div></div>
@@ -497,20 +509,26 @@
     </div>
 
     <div class="btnrow">
-      <div class="grp">
+      <div class="grp vonly">
         <button class="ib ic" id="bMute" title="Звук (M)">&#xE767;</button>
         <input type="range" id="vol" min="0" max="1" step="0.01" value="1" title="Громкость">
         <span class="volpct" id="volPct">100</span>
       </div>
-      <div class="grp">
+      <div class="grp vonly">
         <button class="ib ic" id="bBack10" title="Назад на 10 с (J)">&#xED3C;</button>
         <button class="ib big ic" id="bPlay" title="Воспроизвести (Пробел)">&#xE768;</button>
         <button class="ib ic" id="bFwd30" title="Вперёд на 30 с (L)">&#xED3D;</button>
       </div>
+      <div class="grp ponly"><span class="piccount" id="picCount"></span></div>
+      <div class="grp ponly">
+        <button class="ib ic" id="bPicPrev" title="Предыдущее фото (←)">&#xE76B;</button>
+        <button class="ib ic" id="bPicNext" title="Следующее фото (→)">&#xE76C;</button>
+      </div>
       <div class="grp r">
-        <button class="ib ic" id="bShot" title="Скриншот кадра: сохранить и скопировать (S). С Shift — только увеличенная часть">&#xE722;</button>
+        <button class="ib ic ponly" id="bPicCopy" title="Скопировать картинку (Ctrl+C)">&#xE8C8;</button>
+        <button class="ib ic vonly" id="bShot" title="Скриншот кадра: сохранить и скопировать (S). С Shift — только увеличенная часть">&#xE722;</button>
         <button class="ib ic" id="bOcr" title="Текст с кадра: скопировать надписи (C)">&#xE8D2;</button>
-        <button class="ib ic" id="bTrim" title="Обрезать (T)">&#xE8C6;</button>
+        <button class="ib ic vonly" id="bTrim" title="Обрезать (T)">&#xE8C6;</button>
         <button class="ib ic" id="bZIn" title="Увеличить (+ или колесо мыши)">&#xE8A3;</button>
         <button class="ib ic" id="bFull" title="Во весь экран (F)">&#xE740;</button>
         <button class="ib ic" id="bMore" title="Другие параметры">&#xE712;</button>
@@ -518,20 +536,21 @@
     </div>
 
     <div class="menu acrylic" id="menu">
-      <div class="mlabel">Скорость воспроизведения</div>
-      <div class="speeds" id="speeds"></div>
-      <div id="menuTracks"></div>
-      <div class="msep"></div>
-      <button class="mi" id="miPrev"><span class="ic">&#xE892;</span>Предыдущий кадр<span class="k">,</span></button>
-      <button class="mi" id="miNext"><span class="ic">&#xE893;</span>Следующий кадр<span class="k">.</span></button>
-      <button class="mi" id="miCopy"><span class="ic">&#xE8C8;</span>Скопировать текущее время<span class="k">Ctrl+C</span></button>
-      <div class="msep"></div>
-      <button class="mi" id="miShot"><span class="ic">&#xE722;</span>Скриншот кадра<span class="k">S</span></button>
+      <div class="mlabel vonly">Скорость воспроизведения</div>
+      <div class="speeds vonly" id="speeds"></div>
+      <div id="menuTracks" class="vonly"></div>
+      <div class="msep vonly"></div>
+      <button class="mi vonly" id="miPrev"><span class="ic">&#xE892;</span>Предыдущий кадр<span class="k">,</span></button>
+      <button class="mi vonly" id="miNext"><span class="ic">&#xE893;</span>Следующий кадр<span class="k">.</span></button>
+      <button class="mi vonly" id="miCopy"><span class="ic">&#xE8C8;</span>Скопировать текущее время<span class="k">Ctrl+C</span></button>
+      <div class="msep vonly"></div>
+      <button class="mi vonly" id="miShot"><span class="ic">&#xE722;</span>Скриншот кадра<span class="k">S</span></button>
+      <button class="mi ponly" id="miPicCopy"><span class="ic">&#xE8C8;</span>Скопировать картинку<span class="k">Ctrl+C</span></button>
       <button class="mi" id="miShots"><span class="ic">&#xE8B9;</span>Папка со скриншотами</button>
       <div class="msep"></div>
       <button class="mi" id="miPixel"><span class="ic">&#xE8B3;</span>Чёткие пиксели при увеличении<span class="chk ic">&#xE73E;</span></button>
       <button class="mi" id="miFolder"><span class="ic">&#xE838;</span>Открыть папку с файлом</button>
-      <button class="mi danger" id="miDelete"><span class="ic">&#xE74D;</span>Удалить видео<span class="k">Del</span></button>
+      <button class="mi danger" id="miDelete"><span class="ic">&#xE74D;</span>Удалить в корзину<span class="k">Del</span></button>
       <button class="mi" id="miKeys"><span class="ic">&#xE765;</span>Сочетания клавиш<span class="k">?</span></button>
       <div class="msep"></div>
       <button class="mi" id="miBug"><span class="ic">&#xEBE8;</span>Сообщить о проблеме</button>
@@ -560,7 +579,9 @@
       <span><kbd>Esc</kbd> <kbd>Backspace</kbd></span><span>Вернуться в библиотеку</span>
       <span><kbd>S</kbd></span><span>Скриншот кадра, с Shift — только увеличенная часть</span>
       <span><kbd>C</kbd></span><span>Текст с кадра: скопировать надписи</span>
-      <span><kbd>Del</kbd></span><span>Удалить видео в корзину</span>
+      <span><kbd>Del</kbd></span><span>Удалить видео или фото в корзину</span>
+      <span><kbd>←</kbd> <kbd>→</kbd> на фото</span><span>Соседние фото из той же папки</span>
+      <span><kbd>Ctrl</kbd>+<kbd>C</kbd> на фото</span><span>Скопировать картинку</span>
       <span><kbd>Ctrl</kbd>+<kbd>O</kbd></span><span>Открыть файл</span>
     </div>
     <div class="foot"><span id="ver"></span><button class="btn accent" id="bHelpClose">Закрыть</button></div>
@@ -583,7 +604,7 @@
 </div>
 <div class="dialog" id="del">
   <div class="card acrylic">
-    <h3>Удалить видео?</h3>
+    <h3 id="delTitle">Удалить видео?</h3>
     <div class="del-name" id="delName"></div>
     <div class="upd-sub" id="delSub"></div>
     <div class="upd-msg" id="delMsg"></div>
@@ -638,6 +659,13 @@
   const baseReady = N.base().then(b => { videoBase = b; });
   const $ = id => document.getElementById(id);
   const v = $('v'), stage = $('stage'), tl = $('tl');
+  // A photo opens in the same stage as a video: zoom, minimap and "text from the frame" work on whichever is shown.
+  const pic = $('pic');
+  const isImg = p => /\.(png|jpe?g|webp|gif|bmp|avif)$/i.test(p || '');
+  const picMode = () => document.body.classList.contains('pic');
+  const frameEl = () => (picMode() ? pic : v);
+  const frameW = () => (picMode() ? pic.naturalWidth : v.videoWidth);
+  const frameH = () => (picMode() ? pic.naturalHeight : v.videoHeight);
 
   // ---------- storage (best effort) ----------
   const store = {
@@ -857,8 +885,8 @@
       `<span class="pin ic" title="${pinned ? 'Открепить' : 'Закрепить'}">${pinned ? '&#xE840;' : '&#xE718;'}</span></div>` +
       `<div class="name">${esc(folderName(dir))}</div><div class="sub"></div>`;
     const sub = b.querySelector('.sub'), where = onHome ? parentDir(dir) : '';
-    const fill = (count, size) => {
-      if (count) { b.querySelector('.cnt').textContent = count.toLocaleString('ru') + ' видео'; b.querySelector('.badge').classList.add('show'); }
+    const fill = (count, size, noun = ' видео') => {
+      if (count) { b.querySelector('.cnt').textContent = count.toLocaleString('ru') + noun; b.querySelector('.badge').classList.add('show'); }
       sub.textContent = [where !== dir && where, size ? fmtSize(size) : ''].filter(Boolean).join(' · ') || (onHome ? dir : '');
     };
     fill(st && st.count, st && st.size);
@@ -875,8 +903,10 @@
       const d = await N.list(tile._dir).catch(() => null);
       if (d && !d.files.length && !d.dirs.length) tile.classList.add('nothing');   // nothing to watch inside: step back visually
       if (!d || !tile.isConnected || !d.files.length) return;
-      f = d.files[0];
-      tile._fill(d.files.length, d.files.reduce((a, x) => a + x.size, 0));
+      // videos are what the card counts; a folder with photos only says so
+      const vids = d.files.filter(x => !x.image), shown = vids.length ? vids : d.files;
+      f = shown[0];
+      tile._fill(shown.length, shown.reduce((a, x) => a + x.size, 0), vids.length ? ' видео' : ' фото');
     }
     let t = thumbCache.get(thumbKey(f));
     if (!t) { t = await N.thumb(f.path).catch(() => null); if (t) thumbCache.set(thumbKey(f), t); }
@@ -987,8 +1017,8 @@
     withFolder = showFolder; lastDay = null; dayTiles = null;
     pending = files.map(x => {
       const m = OBS_NAME.exec(x.name);
-      const when = m ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(x.mtime);
-      return { ...x, when, obs: !!m, clip: / cut \d/.test(x.name) };
+      const when = m && !x.image ? new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : new Date(x.mtime);
+      return { ...x, when, obs: !!m && !x.image, clip: / cut \d/.test(x.name) };
     }).sort((a, b) => b.when - a.when);
     renderMore();
   }
@@ -1001,13 +1031,15 @@
       const b = document.createElement('button');
       b.className = 'tile' + (cur && cur.path === x.path ? ' current' : '');
       b.dataset.path = x.path; b._file = x; b.title = withFolder ? x.path : x.name;
-      b.innerHTML = `<div class="thumb"><img alt=""><span class="ph ic">&#xE714;</span><span class="play ic">&#xE768;</span>` +
+      b.innerHTML = `<div class="thumb"><img alt=""><span class="ph ic">${x.image ? '&#xE91B;' : '&#xE714;'}</span>${x.image ? '' : '<span class="play ic">&#xE768;</span>'}` +
         `<span class="dur" style="display:none"></span><span class="watched"></span></div>` +
-        `<div class="name">${esc(title)}</div><div class="sub">${esc(folder + fmtSize(x.size))}</div>`;
+        `<div class="name">${esc(title)}</div><div class="sub">${esc(folder + (x.image ? 'Фото · ' : '') + fmtSize(x.size))}</div>`;
       b.onclick = () => loadFile(x.path);
       b.oncontextmenu = e => { stopPreview(); showCtx(e, x); };
-      b.onpointerenter = () => schedulePreview(b);
-      b.onpointerleave = () => stopPreview();
+      if (!x.image) {   // a photo has nothing to play
+        b.onpointerenter = () => schedulePreview(b);
+        b.onpointerleave = () => stopPreview();
+      }
       dayTiles.appendChild(b);
       io.observe(b);
     }
@@ -1058,8 +1090,9 @@
   }
   N.onMedia(m => { media = m; scanning = false; scanInfo = null; mediaChanged(); });
 
-  // ---------- hover preview: hold the cursor on a tile and the video plays inside it, muted ----------
-  const PREVIEW_DELAY = 2000;
+  // ---------- hover preview: point at a tile and the video plays inside it, muted ----------
+  // Long enough that sweeping the cursor across the library doesn't open every file on the way.
+  const PREVIEW_DELAY = 350;
   let previewTimer = null, previewTile = null;
   function schedulePreview(tile) {
     stopPreview();
@@ -1075,7 +1108,7 @@
     const start = pos > 5 && (!d || pos < d - 5) ? pos : d ? Math.min(d * 0.1, 60) : 0;
     pv.src = videoBase + encodeURIComponent(p) + (start ? '#t=' + start.toFixed(1) : '');
     pv.onplaying = () => pv.classList.add('on');
-    pv.onerror = () => pv.remove();          // e.g. FLV: no preview, the tile stays as it was
+    pv.onerror = () => { pv.remove(); tile.classList.remove('previewing'); };   // e.g. FLV: no preview, the tile stays as it was
     tile.querySelector('.thumb').appendChild(pv);
     tile.classList.add('previewing');
     previewTile = tile;
@@ -1089,7 +1122,14 @@
     previewTile.classList.remove('previewing');
     previewTile = null;
   }
-  $('library').addEventListener('scroll', stopPreview, { passive: true });
+  // Scrolling stops the preview; when it settles, the tile that ended up under the cursor starts its own
+  // (the cursor didn't move, so no pointerenter comes).
+  let rehoverTimer = null;
+  function rehover() {
+    const t = document.querySelector('#groups .tile:hover');
+    if (t && t._file && !t._file.image && t !== previewTile && !$('ctx').classList.contains('show')) schedulePreview(t);
+  }
+  $('library').addEventListener('scroll', () => { stopPreview(); clearTimeout(rehoverTimer); rehoverTimer = setTimeout(rehover, 150); }, { passive: true });
 
   function renderLibrary(d) {
     stopPreview();
@@ -1116,20 +1156,75 @@
     if (!videoBase) { baseReady.then(() => loadFile(path)); return; }   // opened before the video server answered
     savePos();
     stopPreview(); hideCtx();
-    cur = { path, name: baseName(path) };
+    const image = isImg(path);
+    cur = { path, name: baseName(path), image };
     aud = null; renderLanes();
     if (autoMuted) { v.muted = false; autoMuted = false; }
     clearStageMsg();
-    v.src = videoBase + encodeURIComponent(path);
+    closeOcr();
+    document.body.classList.toggle('pic', image);
+    pic.removeAttribute('src');
+    if (image) {
+      if (v.getAttribute('src')) { v.pause(); v.removeAttribute('src'); v.load(); }   // let go of the video that was open
+      pic.src = videoBase + encodeURIComponent(path);
+      loadPicList(path);
+    } else v.src = videoBase + encodeURIComponent(path);
     $('docTitle').textContent = cur.name;
     document.title = cur.name + ' — RPp';
     setIn(null); setOut(null); setLoop(false); showTrim(false); $('job').classList.remove('show');
     resetZoom(); fpsDelta = Infinity; lastMT = null;
     updateCutState();
     showPlayer(true);
-    v.play().catch(() => {});
+    if (!image) v.play().catch(() => {});
   }
-  let resumeAt = null;   // set when skipping a damaged spot
+
+  // ---------- photos ----------
+  // Left and right walk through the pictures of the same folder, in the order the library shows them (newest first).
+  let picList = [], picReq = 0;
+  pic.addEventListener('load', () => { if (picMode()) applyZoom(); });
+  pic.addEventListener('error', () => {
+    if (!picMode() || !cur || !pic.getAttribute('src')) return;
+    stageMsg('err', 'Не удалось открыть фото', 'Файл повреждён, недописан или это не картинка. ' + cur.path);
+  });
+  function syncPicNav() {
+    const i = cur ? picList.indexOf(cur.path) : -1;
+    $('picCount').textContent = i >= 0 && picList.length > 1 ? `${i + 1} из ${picList.length}` : '';
+    $('bPicPrev').disabled = i <= 0;
+    $('bPicNext').disabled = i < 0 || i >= picList.length - 1;
+  }
+  async function loadPicList(path) {
+    const my = ++picReq;
+    if (!picList.includes(path)) picList = [path];   // another folder: until its list arrives there are no neighbours
+    syncPicNav();
+    const d = await N.list(dirOf(path)).catch(() => null);
+    if (my !== picReq || !d || !cur || cur.path !== path) return;
+    const list = d.files.filter(f => f.image).map(f => f.path);
+    // the file is gone from disk: keep the old order without the vanished ones, so the neighbours stay reachable
+    picList = list.includes(path) ? list : picList.filter(x => x === path || list.includes(x));
+    syncPicNav();
+  }
+  function stepPic(d) {
+    if (!cur || !cur.image) return;
+    const next = picList[picList.indexOf(cur.path) + d];
+    if (next && picList.indexOf(cur.path) >= 0) loadFile(next);
+  }
+  async function copyPic() {
+    closeMenu();
+    if (!picMode() || !pic.naturalWidth) return;
+    try {
+      const c = document.createElement('canvas');
+      c.width = pic.naturalWidth; c.height = pic.naturalHeight;
+      c.getContext('2d').drawImage(pic, 0, 0);
+      const blob = await new Promise(r => c.toBlob(r, 'image/png'));
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      toast('Картинка скопирована');
+    } catch { toast('Не удалось скопировать картинку', true); }
+  }
+  $('bPicPrev').onclick = () => stepPic(-1);
+  $('bPicNext').onclick = () => stepPic(1);
+  $('bPicCopy').onclick = $('miPicCopy').onclick = copyPic;
+
+  let resumeAt = null;  // set when skipping a damaged spot
   v.addEventListener('loadedmetadata', () => {
     $('tDur').textContent = fmt(dur(), false);
     const p = cur && store.get('pos', {})[cur.path];
@@ -1746,7 +1841,7 @@
   const ZMAX = 16;
   function contentRect() {
     const W = stage.clientWidth, H = stage.clientHeight;
-    const vw = v.videoWidth || W, vh = v.videoHeight || H;
+    const vw = frameW() || W, vh = frameH() || H;
     const k = Math.min(W / vw, H / vh), cw = vw * k, ch = vh * k;
     return { W, H, cx: (W - cw) / 2, cy: (H - ch) / 2, cw, ch };
   }
@@ -1762,7 +1857,7 @@
   function applyZoom() {
     ocrStale();   // boxes would no longer match the picture
     clampPan();
-    v.style.transform = `translate(${Z.tx}px, ${Z.ty}px) scale(${Z.s})`;
+    v.style.transform = pic.style.transform = `translate(${Z.tx}px, ${Z.ty}px) scale(${Z.s})`;
     $('zoomVal').textContent = Math.round(Z.s * 100) + '%';
     stage.classList.toggle('zoomed', Z.s > 1.001);
     drawNav(true);
@@ -1777,7 +1872,7 @@
   function resetZoom() { Z.s = 1; Z.tx = 0; Z.ty = 0; applyZoom(); }
 
   stage.addEventListener('wheel', e => {
-    if (!v.getAttribute('src')) return;
+    if (!v.getAttribute('src') && !picMode()) return;
     e.preventDefault();
     const r = stage.getBoundingClientRect();
     zoomAt(Z.s * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
@@ -1814,13 +1909,13 @@
   const nav = $('nav'), nctx = nav.getContext('2d');
   let navLast = 0;
   function drawNav(force) {
-    if (Z.s <= 1.001 || !v.videoWidth) return;
+    if (Z.s <= 1.001 || !frameW()) return;
     const now = performance.now();
     if (!force && now - navLast < 120) return;
     navLast = now;
-    const w = 200, h = Math.round(w * v.videoHeight / v.videoWidth);
+    const w = 200, h = clamp(Math.round(w * frameH() / frameW()), 20, 360);
     if (nav.width !== w || nav.height !== h) { nav.width = w; nav.height = h; }
-    try { nctx.drawImage(v, 0, 0, w, h); } catch { nctx.fillStyle = '#111'; nctx.fillRect(0, 0, w, h); }
+    try { nctx.drawImage(frameEl(), 0, 0, w, h); } catch { nctx.fillStyle = '#111'; nctx.fillRect(0, 0, w, h); }
     const r = contentRect();
     const toU = (x, t, c, cs) => ((x - t) / Z.s - c) / cs;
     const x0 = clamp(toU(0, Z.tx, r.cx, r.cw), 0, 1), x1 = clamp(toU(r.W, Z.tx, r.cx, r.cw), 0, 1);
@@ -1849,14 +1944,14 @@
   // the picture changed (played, sought, zoomed, resized, another file): boxes and pending results are void
   function ocrStale() { ocrEpoch = (ocrEpoch || 0) + 1; closeOcr(); }
   function visibleSource() {
-    const r = contentRect(), vw = v.videoWidth, vh = v.videoHeight;
+    const r = contentRect(), vw = frameW(), vh = frameH();
     const toU = (x, t, c, cs) => ((x - t) / Z.s - c) / cs;
     const u0 = clamp(toU(0, Z.tx, r.cx, r.cw), 0, 1), u1 = clamp(toU(r.W, Z.tx, r.cx, r.cw), 0, 1);
     const w0 = clamp(toU(0, Z.ty, r.cy, r.ch), 0, 1), w1 = clamp(toU(r.H, Z.ty, r.cy, r.ch), 0, 1);
     return { sx: u0 * vw, sy: w0 * vh, sw: (u1 - u0) * vw, sh: (w1 - w0) * vh, vw, vh, r };
   }
   async function readText() {
-    if (ocrBusy || !cur || !v.videoWidth) return;
+    if (ocrBusy || !cur || !frameW()) return;
     if (ocrOn) return closeOcr();
     v.pause(); closeMenu();
     ocrBusy = true;
@@ -1875,7 +1970,7 @@
       const c = document.createElement('canvas');
       c.width = Math.round(src.sw * k); c.height = Math.round(src.sh * k);
       const g = c.getContext('2d'); g.imageSmoothingQuality = 'high';
-      g.drawImage(v, src.sx, src.sy, src.sw, src.sh, 0, 0, c.width, c.height);
+      g.drawImage(frameEl(), src.sx, src.sy, src.sw, src.sh, 0, 0, c.width, c.height);
       const res = await N.ocr(c.toDataURL('image/png'));
       dropBusy();
       if (!stillSame()) { $('bOcr').classList.remove('on'); return; }   // played, sought, zoomed or left meanwhile
@@ -1937,7 +2032,7 @@
   let shotQ = Promise.resolve(), shotsPending = 0;
   function takeShot(viewOnly) {
     closeMenu();
-    if (!cur) return;
+    if (!cur || picMode()) return;
     if (!v.videoWidth || v.readyState < 2) { toast('Кадр ещё не загрузился', true); return; }
     if (shotsPending >= 5) { toast('Предыдущие скриншоты ещё сохраняются', true); return; }
     let c;
@@ -1995,6 +2090,7 @@
     closeMenu(); hideCtx(); stopPreview();
     if (cur && cur.path === p) v.pause();
     delPath = p;
+    $('delTitle').textContent = isImg(p) ? 'Удалить фото?' : 'Удалить видео?';
     $('delName').textContent = baseName(p);
     $('delSub').textContent = (size ? fmtSize(size) + '. ' : '') + 'Файл переместится в Корзину Windows, оттуда его можно восстановить.';
     $('delMsg').textContent = ''; $('delMsg').classList.remove('err');
@@ -2011,7 +2107,7 @@
     const playing = cur && cur.path === p;
     if (playing) {   // let go of the file: the player and its server keep it open while it's loaded
       showPlayer(false);
-      v.removeAttribute('src'); v.load(); cur = null;
+      v.removeAttribute('src'); v.load(); pic.removeAttribute('src'); cur = null;
     }
     try {
       await N.trash(p);
@@ -2019,7 +2115,8 @@
       for (const k of [...thumbCache.keys()]) if (k.startsWith(p + '|')) thumbCache.delete(k);
       if (media) media.files = media.files.filter(f => f.path !== p);
       delBusy = false; closeDelete();
-      toast('Видео перемещено в корзину');
+      picList = picList.filter(x => x !== p);
+      toast(isImg(p) ? 'Фото перемещено в корзину' : 'Видео перемещено в корзину');
       refreshView(true);
     } catch (e) {
       $('delMsg').textContent = e.message; $('delMsg').classList.add('err');
@@ -2114,7 +2211,7 @@
     document.body.classList.remove('idle');
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      const busy = v.paused || $('trim').classList.contains('show') || $('menu').classList.contains('show') ||
+      const busy = (v.paused && !picMode()) || $('trim').classList.contains('show') || $('menu').classList.contains('show') ||
         $('chrome').matches(':hover') || tlDrag;
       if (!busy && document.body.classList.contains('play')) document.body.classList.add('idle');
     }, 2600);
@@ -2135,9 +2232,9 @@
   document.addEventListener('dragend', dragOff);
   document.addEventListener('drop', e => {
     e.preventDefault(); dragOff();
-    const f = [...e.dataTransfer.files].find(f => /\.(mp4|mkv|mov|flv|ts|webm|m4v)$/i.test(f.name));
+    const f = [...e.dataTransfer.files].find(f => /\.(mp4|mkv|mov|flv|ts|webm|m4v)$/i.test(f.name) || isImg(f.name));
     const p = f && N.pathForFile(f);
-    if (p) openOutside(p); else if (e.dataTransfer.files.length) toast('Это не видеофайл', true);
+    if (p) openOutside(p); else if (e.dataTransfer.files.length) toast('Это не видео и не фото', true);
   });
 
   // ---------- render loop ----------
@@ -2204,6 +2301,14 @@
     if (!playing) {   // Backspace: one folder up, and from the top of a disk to the list of all folders
       if (k === 'Backspace' && view === 'folders' && !home) listing && listing.parent ? openDir(listing.parent) : openHome();
       return;
+    }
+    if (picMode()) {   // a photo: neighbours, copy, and the keys shared with video (zoom, text, fullscreen, delete, back)
+      if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyPic(); return; }
+      if (e.ctrlKey || e.altKey || e.metaKey) { if (e.altKey && k === 'ArrowLeft') showPlayer(false); return; }
+      const shared = ['KeyF', 'Digit0', 'Numpad0', 'Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract', 'Backspace', 'Delete', 'KeyC', 'Escape'];
+      if (code === 'ArrowLeft' || code === 'PageUp') { handled(); stepPic(-1); return; }
+      if (code === 'ArrowRight' || code === 'PageDown' || code === 'Space') { handled(); stepPic(1); return; }
+      if (!shared.includes(code) && k !== '?') return;
     }
     if (e.ctrlKey && k === 'Enter') { handled(); cut(); return; }
     if (e.ctrlKey && code === 'KeyC' && !String(getSelection())) { handled(); copyTime(v.currentTime, 'Время', $('tCur')); return; }

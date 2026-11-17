@@ -39,6 +39,13 @@ const MIME = {
   '.webm': 'video/webm', '.ts': 'video/mp2t', '.flv': 'video/x-flv',
 };
 const isVideo = p => typeof p === 'string' && VIDEO_EXT.has(path.extname(p).toLowerCase());
+// Pictures open in the same window (screenshots of frames first of all); only what Chromium shows by itself.
+const IMAGE_MIME = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.gif': 'image/gif', '.bmp': 'image/bmp', '.avif': 'image/avif',
+};
+const isImage = p => typeof p === 'string' && Object.hasOwn(IMAGE_MIME, path.extname(p).toLowerCase());
+const isMedia = p => isVideo(p) || isImage(p);
 const REPO = 'sempik/RPp';
 const SITE_URL = `https://github.com/${REPO}/releases/latest`;
 
@@ -184,7 +191,7 @@ function init() {
     if (u.searchParams.get('t') !== token) { res.writeHead(403); res.end(); return; }
     if (u.pathname === '/thumb') return serveThumb(u.searchParams.get('k'), res);
     const file = u.searchParams.get('path');
-    if (u.pathname !== '/video' || !isVideo(file)) { res.writeHead(403); res.end(); return; }
+    if (u.pathname !== '/video' || !isMedia(file)) { res.writeHead(403); res.end(); return; }
     let st;
     try { st = await fsp.stat(file); } catch { st = null; }
     if (!st || !st.isFile()) { res.writeHead(404); res.end(); return; }
@@ -197,7 +204,7 @@ function init() {
     }
     if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); res.end(); return; }
     const headers = {
-      'Content-Type': MIME[path.extname(file).toLowerCase()],
+      'Content-Type': MIME[path.extname(file).toLowerCase()] || IMAGE_MIME[path.extname(file).toLowerCase()],
       'Accept-Ranges': 'bytes',
       'Content-Length': end - start + 1,
       'Cache-Control': 'no-store',
@@ -494,7 +501,7 @@ function init() {
   }
   function pumpThumbs() {
     while (thumbActive < 2 && thumbQueue.length) {
-      const j = thumbQueue.shift();
+      const j = thumbQueue.pop();   // newest first: what is on screen now, not what was scrolled past
       thumbActive++;
       extractThumb(j).catch(() => j.resolve(null)).finally(() => { thumbActive--; pumpThumbs(); });
     }
@@ -503,15 +510,16 @@ function init() {
     await fsp.mkdir(thumbDir, { recursive: true });
     const grab = ss => new Promise(res => {
       fs.rmSync(file, { force: true });
-      const pr = run(ffmpegPath, ['-hide_banner', '-ss', String(ss), '-i', p, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', '-y', file]);
+      const pr = run(ffmpegPath, ['-hide_banner', ...(ss === null ? [] : ['-ss', String(ss)]), '-i', p, '-frames:v', '1', '-vf', 'scale=480:-2', '-q:v', '5', '-y', file]);
       let err = '';
       pr.stderr.on('data', d => { err += d; });
       pr.on('error', () => res(err));
       pr.on('close', () => res(err));
     });
-    let log = await grab(8);
-    if (!fs.existsSync(file) || !fs.statSync(file).size) log = await grab(0);
-    const m = /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(log);
+    const image = isImage(p);   // a picture has no eighth second and no duration
+    let log = await grab(image ? null : 8);   // with -ss ffmpeg gives nothing for a JPEG
+    if (!image && (!fs.existsSync(file) || !fs.statSync(file).size)) log = await grab(0);
+    const m = !image && /Duration: (\d+):(\d+):(\d+(?:\.\d+)?)/.exec(log);
     const duration = m ? +m[1] * 3600 + +m[2] * 60 + +m[3] : null;
     const ok = fs.existsSync(file) && fs.statSync(file).size > 0;
     // failures are not cached: the file may still be recording
@@ -537,6 +545,7 @@ function init() {
   }
   async function listDir(dir) {
     if (!dir) dir = app.getPath('videos');
+    if (/^[A-Za-z]:$/.test(dir)) dir += '\\';   // "C:" alone would mean the current folder on that drive
     try { if ((await fsp.stat(dir)).isFile()) dir = path.dirname(dir); }
     catch { throw new Error('Папка не найдена: ' + dir); }
     dir = path.resolve(dir);
@@ -546,10 +555,12 @@ function init() {
       if (e.name.startsWith('.') || e.name.startsWith('$')) continue;
       const full = path.join(dir, e.name);
       if (e.isDirectory()) dirs.push({ name: e.name, path: full });
-      else if (e.isFile() && isVideo(e.name) && await realVideo(full, e.name)) {
+      else if (e.isFile() && (isImage(e.name) || isVideo(e.name) && await realVideo(full, e.name))) {
         try {
           const st = await fsp.stat(full);
-          files.push({ name: e.name, path: full, size: st.size, mtime: st.mtimeMs });
+          const f = { name: e.name, path: full, size: st.size, mtime: st.mtimeMs };
+          if (isImage(e.name)) f.image = true;
+          files.push(f);
         } catch { /* locked or vanished */ }
       }
     }
@@ -719,7 +730,7 @@ function init() {
     if (typeof p !== 'string' || !p) return;
     try { if ((await fsp.stat(p)).isDirectory()) shell.openPath(p); } catch { }
   });
-  ipcMain.handle('thumb', (_, p) => (isVideo(p) ? getThumb(p) : null));
+  ipcMain.handle('thumb', (_, p) => (isMedia(p) ? getThumb(p) : null));
   ipcMain.handle('chrome-mode', (_, mode) => {
     if (!win) return;
     try { win.setTitleBarOverlay(mode === 'player' ? { color: '#000000', symbolColor: '#ffffff' } : { color: '#202020', symbolColor: '#ffffff' }); } catch { }
@@ -884,7 +895,7 @@ function init() {
   // Delete = move to the Windows Recycle Bin. The player releases the file first; Windows may still hold it
   // for a moment (our video server, a thumbnail being made), so retry briefly.
   ipcMain.handle('trash', async (_, p) => {
-    if (!isVideo(p) || !fs.existsSync(p)) throw new Error('Файл не найден');
+    if (!isMedia(p) || !fs.existsSync(p)) throw new Error('Файл не найден');
     // a copy for viewing may still be reading this file
     if (conv && conv.state === 'running' && conv.src === p) { conv.state = 'cancelled'; conv.proc.kill(); }
     if (wave && wave.src === p) stopWave();
@@ -907,10 +918,15 @@ function init() {
   ipcMain.handle('initial-file', () => { const f = pendingFile; pendingFile = null; return f; });
   ipcMain.handle('open-dialog', async () => {
     const r = await dialog.showOpenDialog(win, {
-      title: 'Открыть видео',
+      title: 'Открыть видео или фото',
       defaultPath: app.getPath('videos'),
       properties: ['openFile'],
-      filters: [{ name: 'Видео', extensions: [...VIDEO_EXT].map(e => e.slice(1)) }, { name: 'Все файлы', extensions: ['*'] }],
+      filters: [
+        { name: 'Видео и фото', extensions: [...VIDEO_EXT, ...Object.keys(IMAGE_MIME)].map(e => e.slice(1)) },
+        { name: 'Видео', extensions: [...VIDEO_EXT].map(e => e.slice(1)) },
+        { name: 'Фото', extensions: Object.keys(IMAGE_MIME).map(e => e.slice(1)) },
+        { name: 'Все файлы', extensions: ['*'] },
+      ],
     });
     return r.canceled ? null : r.filePaths[0];
   });
@@ -1048,5 +1064,5 @@ function init() {
 }
 
 function findVideoArg(argv) {
-  return argv.slice(1).find(a => isVideo(a) && fs.existsSync(a)) || null;
+  return argv.slice(1).find(a => isMedia(a) && fs.existsSync(a)) || null;
 }

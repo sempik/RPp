@@ -83,6 +83,17 @@ Root: HKCU; Subkey: "Software\Classes\.flv\OpenWithProgids"; ValueType: string; 
 Root: HKCU; Subkey: "Software\Classes\.ts\OpenWithProgids"; ValueType: string; ValueName: "RPp.Video"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.webm\OpenWithProgids"; ValueType: string; ValueName: "RPp.Video"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKCU; Subkey: "Software\Classes\.m4v\OpenWithProgids"; ValueType: string; ValueName: "RPp.Video"; ValueData: ""; Flags: uninsdeletevalue
+; the same for pictures (does not steal the default photo viewer either)
+Root: HKCU; Subkey: "Software\Classes\RPp.Image"; ValueType: string; ValueData: "Image (RPp)"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\RPp.Image\DefaultIcon"; ValueType: string; ValueData: """{app}\RPp.exe"",0"
+Root: HKCU; Subkey: "Software\Classes\RPp.Image\shell\open\command"; ValueType: string; ValueData: """{app}\RPp.exe"" ""%1"""
+Root: HKCU; Subkey: "Software\Classes\.png\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.jpg\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.jpeg\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.webp\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.gif\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.bmp\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKCU; Subkey: "Software\Classes\.avif\OpenWithProgids"; ValueType: string; ValueName: "RPp.Image"; ValueData: ""; Flags: uninsdeletevalue
 
 [UninstallDelete]
 ; caches RPp made for itself (copies of FLV/TS for viewing can take up to 20 GB, library thumbnails, the downloaded
